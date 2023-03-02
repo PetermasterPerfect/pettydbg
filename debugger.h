@@ -7,10 +7,10 @@ public:
 	Debugger(const char*);
 	Debugger(DWORD pid);
 	
-	VOID enterDebuggerLoop();
+	void enterDebuggerLoop();
 
 private:
 	HANDLE hProcess;
-	BOOL isAttached;
+	bool isAttached;
 	HANDLE startup(const char*);
 };

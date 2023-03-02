@@ -1,6 +1,6 @@
 #include "debugger.h"
 
-VOID Debugger::enterDebuggerLoop()
+void Debugger::enterDebuggerLoop()
 {
 	DEBUG_EVENT debugEv;
 	while(true)
@@ -18,13 +18,14 @@ VOID Debugger::enterDebuggerLoop()
 			
 }
 
-Debugger::Debugger(const char *filePath)
+Debugger::Debugger(const char *filePath) // filePath arg is basically cmd run by CreateProcess
 {
 	hProcess = startup(filePath);
 	if(hProcess == NULL)
 		fprintf(stderr, "startup failed [%lx]\n", GetLastError());
 	
-	isAttached = FALSE;
+	printf("Running %s\n with id %i\n" filePath, GetProcessId(hProcess));
+	isAttached = false;
 }
 
 Debugger::Debugger(DWORD pid)
@@ -41,14 +42,16 @@ Debugger::Debugger(DWORD pid)
 		fprintf(stderr, "DebugActiveProcess failed [%lx]\n", GetLastError());
 		return;
 	}
-	isAttached = TRUE;
+	
+	printf("Attaching to process with id %l\n", pid);
+	isAttached = true;
 }
 
 HANDLE Debugger::startup(const char *cmdLine)
 {
     STARTUPINFOA si;
     PROCESS_INFORMATION pi;
-    BOOL creationResult;
+    bool creationResult;
 	
     ZeroMemory(&si, sizeof(si));
     si.cb = sizeof(si);
