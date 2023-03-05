@@ -24,7 +24,7 @@ Debugger::Debugger(const char *filePath) // filePath arg is basically cmd run by
 	if(hProcess == NULL)
 		fprintf(stderr, "startup failed [%lx]\n", GetLastError());
 
-	printf("Running %s\n", filePath);
+	printf("Running %s with id %l\n", filePath, GetProcessId(hProcess));
 	isAttached = false;
 }
 

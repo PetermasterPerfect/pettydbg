@@ -1,10 +1,9 @@
 #include "main.h"
 
 
-// x86_64-w64-mingw32-g++ main.cpp debugger.cpp -o dbg.exe
+// x86_64-w64-mingw32-g++ main.cpp debugger.cpp commandline.cpp splitstring.cpp -o dbg.exe
 int main(int argc, char** argv)
 {
-
     CommandLineInput cmdIn("Running");
     cmdIn.commandLineLoop();
 	/*if(argc < 2)
