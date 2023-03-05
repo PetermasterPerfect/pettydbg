@@ -15,7 +15,7 @@ void Debugger::enterDebuggerLoop()
 			}
 		}
 	}
-			
+
 }
 
 Debugger::Debugger(const char *filePath) // filePath arg is basically cmd run by CreateProcess
@@ -23,8 +23,8 @@ Debugger::Debugger(const char *filePath) // filePath arg is basically cmd run by
 	hProcess = startup(filePath);
 	if(hProcess == NULL)
 		fprintf(stderr, "startup failed [%lx]\n", GetLastError());
-	
-	printf("Running %s\n with id %i\n" filePath, GetProcessId(hProcess));
+
+	printf("Running %s\n", filePath);
 	isAttached = false;
 }
 
@@ -36,13 +36,13 @@ Debugger::Debugger(DWORD pid)
 		fprintf(stderr, "OpenProcess failed [%lx]\n", GetLastError());
 		return;
 	}
-	
+
 	if(!DebugActiveProcess(pid))
 	{
 		fprintf(stderr, "DebugActiveProcess failed [%lx]\n", GetLastError());
 		return;
 	}
-	
+
 	printf("Attaching to process with id %l\n", pid);
 	isAttached = true;
 }
@@ -52,11 +52,11 @@ HANDLE Debugger::startup(const char *cmdLine)
     STARTUPINFOA si;
     PROCESS_INFORMATION pi;
     bool creationResult;
-	
+
     ZeroMemory(&si, sizeof(si));
     si.cb = sizeof(si);
     ZeroMemory(&pi, sizeof(PROCESS_INFORMATION));
-	
+
 	si.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE);
 	si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
 	si.hStdError = GetStdHandle(STD_ERROR_HANDLE);
@@ -70,7 +70,7 @@ HANDLE Debugger::startup(const char *cmdLine)
         TRUE,                  // Set handle inheritance to FALSE
         DEBUG_PROCESS ,//| CREATE_SUSPENDED,
         NULL,           // Use parent's environment block
-        NULL,           // Use parent's starting directory 
+        NULL,           // Use parent's starting directory
         &si,            // Pointer to STARTUPINFO structure
         &pi           // Pointer to PROCESS_INFORMATION structure
         );

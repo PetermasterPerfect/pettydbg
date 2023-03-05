@@ -1,16 +1,18 @@
 #include "main.h"
-#include "debugger.h"
 
 
 // x86_64-w64-mingw32-g++ main.cpp debugger.cpp -o dbg.exe
 int main(int argc, char** argv)
 {
-	if(argc < 2)
+
+    CommandLineInput cmdIn("Running");
+    cmdIn.commandLineLoop();
+	/*if(argc < 2)
 	{
 		fprintf(stderr, "USAGE dbg.exe <app_name.exe>/<-p PID>\n");
 		return 3;
 	}
-	
+
 	CommandLineInput cmdIn;
 	if(std::string(argv[1]) == "-p")
 	{
@@ -24,5 +26,5 @@ int main(int argc, char** argv)
 		if(hProcess == NULL)
 			return 5;
 	}
-	dbg.enterDebuggerLoop();
+	dbg.enterDebuggerLoop();*/
 }

@@ -6,7 +6,7 @@ class Debugger
 public:
 	Debugger(const char*);
 	Debugger(DWORD pid);
-	
+
 	void enterDebuggerLoop();
 
 private:
