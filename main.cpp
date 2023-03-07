@@ -4,8 +4,7 @@
 // x86_64-w64-mingw32-g++ main.cpp debugger.cpp commandline.cpp splitstring.cpp -o dbg.exe
 int main(int argc, char** argv)
 {
-    CommandLineInput cmdIn("Running");
-    cmdIn.commandLineLoop();
+	Debugger dbg("test.exe");
 	/*if(argc < 2)
 	{
 		fprintf(stderr, "USAGE dbg.exe <app_name.exe>/<-p PID>\n");

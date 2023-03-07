@@ -1,16 +1,22 @@
+#pragma once
 #include <mutex>
 #include <vector>
 #include <string>
 #include <iostream>
+#include <mutex>
+#include <atomic>
 #include "splitstring.h"
 
 class CommandLineInput
 {
+protected:
 	std::string status;
+	std::vector<std::string> arguments;
+	std::mutex argMutex;
+	std::mutex statusMutex;
+	std::atomic<bool> cmdToHandle;
+	
 	std::string trim(std::string& str);
-	//void split(std::string work, std::vector<std::stringchar delim, int rep=0);
-	size_t nearer_whitespace_char(size_t, std::string);
-
 public:
 	CommandLineInput(std::string);
 	void commandLineLoop();

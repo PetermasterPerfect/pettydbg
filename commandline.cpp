@@ -1,6 +1,6 @@
 #include "commandline.h"
 
-CommandLineInput::CommandLineInput(std::string st)
+CommandLineInput::CommandLineInput(std::string st) : cmdToHandle(false)
 {
     status = st;
 }
@@ -13,14 +13,20 @@ std::string CommandLineInput::trim(std::string& str)
 
 void CommandLineInput::commandLineLoop()
 {
-    std::vector<std::string> args;
 	std::string cmd;
 	while(status!="exit")
     {
+		statusMutex.lock();
+		argMutex.lock();
         std::cout << "(" << status << ") >>>";
         std::getline(std::cin, cmd);
         trim(cmd);
 		splitstring extraCmd(cmd.c_str());
-		extraCmd.split(' ', 0, args);
+		//arguments.clean();
+		extraCmd.split(' ', 0, arguments);
+		if(arguments.size() > 0)
+			cmdToHandle = true;
+		argMutex.unlock();
+		statusMutex.unlock();
     }
 }

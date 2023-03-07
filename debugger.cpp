@@ -1,24 +1,6 @@
 #include "debugger.h"
 
-void Debugger::enterDebuggerLoop()
-{
-	DEBUG_EVENT debugEv;
-	while(true)
-	{
-		if(!WaitForDebugEvent(&debugEv, 10000))
-			fprintf(stderr, "WaitFordebugEvent failed [%lx]\n", GetLastError());
-		switch(debugEv.u.Exception.ExceptionRecord.ExceptionCode)
-		{
-			default:
-			{
-				printf("%x, %x:\n", debugEv.dwDebugEventCode, debugEv.u.Exception.ExceptionRecord.ExceptionCode);
-			}
-		}
-	}
-
-}
-
-Debugger::Debugger(const char *filePath) // filePath arg is basically cmd run by CreateProcess
+Debugger::Debugger(const char *filePath) : CommandLineInput("Not running yet")  // filePath arg is basically cmd run by CreateProcess
 {
 	hProcess = startup(filePath);
 	if(hProcess == NULL)
@@ -26,9 +8,10 @@ Debugger::Debugger(const char *filePath) // filePath arg is basically cmd run by
 
 	printf("Running %s with id %l\n", filePath, GetProcessId(hProcess));
 	isAttached = false;
+	isRunning = false;
 }
 
-Debugger::Debugger(DWORD pid)
+Debugger::Debugger(DWORD pid) : CommandLineInput("Running")
 {
 	hProcess = OpenProcess(PROCESS_ALL_ACCESS, FALSE, pid);
 	if(hProcess == NULL)
@@ -45,6 +28,185 @@ Debugger::Debugger(DWORD pid)
 
 	printf("Attaching to process with id %l\n", pid);
 	isAttached = true;
+	isRunning = true;
+}
+
+void Debugger::handleCmd()
+{
+	argMutex.lock();
+	if(cmdToHandle)
+	{
+		if(isRunning)
+		{
+			
+			if(arguments[0] == "break")
+				breakCommand();
+			else
+				printf("Process is running, only available command is \"break\"\n");
+		}
+		else
+		{
+			if(arguments[0] == "run")
+				runCommand();			
+			if(arguments[0] == "c")
+				continueCommand();
+			else
+				printf("Command isnt recognized\n");
+		}
+		arguments.clear();
+		cmdToHandle = false;
+	}
+	argMutex.unlock();
+}
+
+void Debugger::enterDebuggerLoop()
+{
+	while(true)
+	{
+		if(!WaitForDebugEvent(&debugEvent, 10000))
+		{
+			fprintf(stderr, "WaitFordebugEvent no expcetion [%lx]\n", GetLastError());
+			handleCmd();
+		}
+		switch(debugEvent.u.Exception.ExceptionRecord.ExceptionCode)
+		{
+			
+			case EXCEPTION_DEBUG_EVENT:
+			{
+				exceptionEvent();
+				break;
+			}
+			
+			case CREATE_THREAD_DEBUG_EVENT:
+			{
+				createThreadEvent();
+				break;
+			}
+			
+			case CREATE_PROCESS_DEBUG_EVENT:
+			{
+				createProcessEvent();
+				break;
+			}
+			
+			case EXIT_THREAD_DEBUG_EVENT:
+			{
+				exitThreadEvent();
+				break;
+			}
+			
+			case EXIT_PROCESS_DEBUG_EVENT:
+			{
+				exitThreadEvent();
+				break;
+			}
+			
+			case LOAD_DLL_DEBUG_EVENT:
+			{
+				loadDllEvent();
+				break;
+			}
+			
+			case UNLOAD_DLL_DEBUG_EVENT:
+			{
+				unloadDllEvent();
+				break;
+			}
+			case OUTPUT_DEBUG_STRING_EVENT:
+			{
+				outputDebugStringEvent();
+				break;
+			}
+			case RIP_EVENT:
+			{
+				ripEvent();
+				break;
+			}			
+			default:
+			{
+				printf("default %x, %x:\n", debugEvent.dwDebugEventCode, debugEvent.u.Exception.ExceptionRecord.ExceptionCode);
+			}
+		}
+	}
+
+}
+
+void Debugger::continueCommand()
+{
+	ContinueDebugEvent(debugEvent.dwProcessId, debugEvent.dwThreadId, DBG_CONTINUE);
+	isRunning = true;
+}
+
+void Debugger::runCommand()
+{
+	ContinueDebugEvent(debugEvent.dwProcessId, debugEvent.dwThreadId, DBG_CONTINUE);
+	isRunning = true;
+}
+
+void Debugger::breakCommand()
+{
+	if(!DebugBreakProcess(hProcess))
+		fprintf(stderr, "DebugBreakProcess failed %lx\n", GetLastError());
+}
+
+void Debugger::changeStatus(std::string newSt)
+{
+	statusMutex.lock();
+	status = newSt;
+	statusMutex.unlock();
+}
+
+void Debugger::exceptionEvent()
+{
+	EXCEPTION_RECORD *expceptionRecord = &debugEvent.u.Exception.ExceptionRecord;
+	std::cout << "exceptionEvent\n";
+	changeStatus("Exception");
+	isRunning = false;
+	printf("Exceptions code %lx at address %p\n", expceptionRecord->ExceptionCode, expceptionRecord->ExceptionAddress);
+	
+	
+}
+void Debugger::createThreadEvent()
+{
+	std::cout << "New thread with id " << GetThreadId(debugEvent.u.CreateThread.hThread) << "\n";
+}
+
+void Debugger::createProcessEvent()
+{
+	std::cout << "Starting process with id " << GetProcessId(debugEvent.u.CreateProcessInfo.hProcess) << "\n";
+}
+
+void Debugger::exitThreadEvent()
+{
+	std::cout << "Exiting thread with code " << debugEvent.u.ExitThread.dwExitCode<< "\n";
+}
+
+void Debugger::exitProcessEvent()
+{
+	std::cout << "Exiting process with code " << debugEvent.u.ExitProcess.dwExitCode << "\n";
+}
+
+void Debugger::loadDllEvent()
+{
+	if(!isAttached)
+	{
+		std::cout << "loadDllEvent: TODO\n";
+	}
+}
+
+void Debugger::unloadDllEvent()
+{
+	std::cout << "unloadDllEvent\n";
+}
+
+void Debugger::outputDebugStringEvent()
+{
+	std::cout << "outputDebugString\n";
+}
+
+void Debugger::ripEvent()
+{
+	std::cout << "RIP error number " << debugEvent.u.RipInfo.dwError << "\n";
 }
 
 HANDLE Debugger::startup(const char *cmdLine)
