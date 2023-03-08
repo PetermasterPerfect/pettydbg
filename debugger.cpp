@@ -61,6 +61,7 @@ void Debugger::handleCmd()
 
 void Debugger::enterDebuggerLoop()
 {
+	//std::thread thInput(&Debugger::commandLineLoop, this);
 	while(true)
 	{
 		if(!WaitForDebugEvent(&debugEvent, 10000))

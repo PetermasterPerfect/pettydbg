@@ -1,5 +1,6 @@
 #include <windows.h>
 #include <cstdio>
+#include <thread>
 #include "commandline.h"
 
 // TODO: decide whether isRunning = false; should be in breakCommand oor in exceptionEvent
