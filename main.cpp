@@ -5,6 +5,9 @@
 int main(int argc, char** argv)
 {
 	Debugger dbg("test.exe");
+	std::thread thInput(dbg.commandLineLoop);
+	dbg.enterDebuggerLoop();
+	
 	/*if(argc < 2)
 	{
 		fprintf(stderr, "USAGE dbg.exe <app_name.exe>/<-p PID>\n");
