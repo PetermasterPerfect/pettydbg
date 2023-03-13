@@ -6,7 +6,7 @@ Debugger::Debugger(const char *filePath) : CommandLineInput("Not running yet")  
 	if(hProcess == NULL)
 		fprintf(stderr, "startup failed [%lx]\n", GetLastError());
 
-	printf("Running %s with id %l\n", filePath, GetProcessId(hProcess));
+	printf("Running %s with id %i\n", filePath, GetProcessId(hProcess));
 	isAttached = false;
 	isRunning = false;
 }
@@ -31,11 +31,23 @@ Debugger::Debugger(DWORD pid) : CommandLineInput("Running")
 	isRunning = true;
 }
 
+void Debugger::foolCin()
+{
+	std::string buf;
+	std::streambuf *backup = std::cin.rdbuf();
+    std::istringstream iss("\n");
+    std::cin.rdbuf(iss.rdbuf());
+	std::cin>>buf;
+	std::cin.rdbuf(backup);
+}
+
 void Debugger::handleCmd()
 {
 	argMutex.lock();
+	//puts("handleCmd");
 	if(cmdToHandle)
 	{
+		//puts("in cmdToHandle if");
 		if(isRunning)
 		{
 			
@@ -51,7 +63,10 @@ void Debugger::handleCmd()
 			if(arguments[0] == "c")
 				continueCommand();
 			else
+			{
+				foolCin();
 				printf("Command isnt recognized\n");
+			}
 		}
 		arguments.clear();
 		cmdToHandle = false;
@@ -64,9 +79,9 @@ void Debugger::enterDebuggerLoop()
 	//std::thread thInput(&Debugger::commandLineLoop, this);
 	while(true)
 	{
-		if(!WaitForDebugEvent(&debugEvent, 10000))
+		if(!WaitForDebugEvent(&debugEvent, 100))
 		{
-			fprintf(stderr, "WaitFordebugEvent no expcetion [%lx]\n", GetLastError());
+			//fprintf(stderr, "WaitFordebugEvent error [%lx]\n", GetLastError());
 			handleCmd();
 		}
 		switch(debugEvent.u.Exception.ExceptionRecord.ExceptionCode)
@@ -125,7 +140,7 @@ void Debugger::enterDebuggerLoop()
 			}			
 			default:
 			{
-				printf("default %x, %x:\n", debugEvent.dwDebugEventCode, debugEvent.u.Exception.ExceptionRecord.ExceptionCode);
+				//printf("default %x, %x:\n", debugEvent.dwDebugEventCode, debugEvent.u.Exception.ExceptionRecord.ExceptionCode);
 			}
 		}
 	}

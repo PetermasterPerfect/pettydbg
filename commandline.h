@@ -5,6 +5,8 @@
 #include <iostream>
 #include <mutex>
 #include <atomic>
+//#include <thread>
+#include <windows.h>
 #include "splitstring.h"
 
 class CommandLineInput

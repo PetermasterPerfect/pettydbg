@@ -1,6 +1,7 @@
 #include <windows.h>
 #include <cstdio>
 #include <thread>
+#include <sstream>
 #include "commandline.h"
 
 // TODO: decide whether isRunning = false; should be in breakCommand oor in exceptionEvent
@@ -28,6 +29,7 @@ private:
 	
 	void handleCmd();
 	void changeStatus(std::string);
+	void foolCin();
 	
 	void exceptionEvent();
 	void createThreadEvent();

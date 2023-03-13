@@ -1,14 +1,16 @@
+#include <fstream>
 #include "main.h"
 
 
-// x86_64-w64-mingw32-g++ main.cpp debugger.cpp commandline.cpp splitstring.cpp -o dbg.exe
+
+// x86_64-w64-mingw32-g++ main.cpp debugger.cpp commandline.cpp splitstring.cpp -o dbg.exe -static
 int main(int argc, char** argv)
 {
 	Debugger dbg("test.exe");
-	std::thread thInput(&Debugger::commandLineLoop, &dbg);
-	dbg.enterDebuggerLoop();
-	
-	/*if(argc < 2)
+	//std::thread thInput(&Debugger::enterDebuggerLoop, &dbg);
+	dbg.commandLineLoop();
+/*	
+	if(argc < 2)
 	{
 		fprintf(stderr, "USAGE dbg.exe <app_name.exe>/<-p PID>\n");
 		return 3;

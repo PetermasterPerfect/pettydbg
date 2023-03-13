@@ -1,13 +1,15 @@
-#include <cstdio>
-#include <windows.h>
+#include <iostream>
+#include <sstream>
+#include <string>
+using namespace std;
 
-// x86_64-w64-mingw32-g++ test.cpp -o test.exe
+int main() {
 
-int main()
-{
-	while(1)
-	{
-		Sleep(2000);
-		putchar('.');
-	}
+	std::string buf;
+	std::streambuf *backup = std::cin.rdbuf();
+    std::istringstream iss("\n");
+    std::cin.rdbuf(iss.rdbuf());
+	cin>>buf;
+	std::cin.rdbuf(backup);
+    return 0;
 }

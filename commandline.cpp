@@ -17,16 +17,21 @@ void CommandLineInput::commandLineLoop()
 	while(status!="exit")
     {
 		statusMutex.lock();
-		argMutex.lock();
         std::cout << "(" << status << ") >>>";
         std::getline(std::cin, cmd);
         trim(cmd);
 		splitstring extraCmd(cmd.c_str());
 		//arguments.clean();
+		
+		argMutex.lock();
 		extraCmd.split(' ', 0, arguments);
-		if(arguments.size() > 0)
+		if(arguments[0] == "a")
+			arguments.clear();
+			
+		else if(arguments.size() > 0)
 			cmdToHandle = true;
 		argMutex.unlock();
 		statusMutex.unlock();
+		//Sleep(0);
     }
 }
