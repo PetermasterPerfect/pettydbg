@@ -30,7 +30,7 @@ private:
 	void handleCmd();
 	void changeStatus(std::string);
 	void foolCin();
-	
+	void debuggerPrint(std::string);	
 	void exceptionEvent();
 	void createThreadEvent();
 	void createProcessEvent();

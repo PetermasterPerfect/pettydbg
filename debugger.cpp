@@ -41,6 +41,12 @@ void Debugger::foolCin()
 	std::cin.rdbuf(backup);
 }
 
+void Debugger::debuggerPrint(std::string str)
+{
+	foolCin();
+	std::cout << str << std::endl;
+}
+
 void Debugger::handleCmd()
 {
 	argMutex.lock();
@@ -54,19 +60,16 @@ void Debugger::handleCmd()
 			if(arguments[0] == "break")
 				breakCommand();
 			else
-				printf("Process is running, only available command is \"break\"\n");
+				debuggerPrint("Process is running, only available command is \"break\"");
 		}
 		else
 		{
 			if(arguments[0] == "run")
 				runCommand();			
-			if(arguments[0] == "c")
+			else if(arguments[0] == "c")
 				continueCommand();
 			else
-			{
-				foolCin();
-				printf("Command isnt recognized\n");
-			}
+				debuggerPrint("Command isnt recognized");
 		}
 		arguments.clear();
 		cmdToHandle = false;

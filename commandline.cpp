@@ -22,7 +22,7 @@ void CommandLineInput::commandLineLoop()
         trim(cmd);
 		splitstring extraCmd(cmd.c_str());
 		//arguments.clean();
-		
+		//std::cout << "CMD: " << cmd << "\n";
 		argMutex.lock();
 		extraCmd.split(' ', 0, arguments);
 		if(arguments[0] == "a")
