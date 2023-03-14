@@ -4,7 +4,7 @@ CommandLineInput::CommandLineInput(std::string st) : cmdToHandle(false)
 {
     status = st;
 }
-std::string CommandLineInput::trim(std::string& str)
+std::string CommandLineInput::trim(std::string& str) // ***
 {
     str.erase(str.find_last_not_of(' ')+1);         //suffixing spaces
     str.erase(0, str.find_first_not_of(' '));       //prefixing spaces
@@ -18,6 +18,7 @@ void CommandLineInput::commandLineLoop()
     {
 		statusMutex.lock();
         std::cout << "(" << status << ") >>>";
+		statusMutex.unlock();
         std::getline(std::cin, cmd);
         trim(cmd);
 		splitstring extraCmd(cmd.c_str());
@@ -25,13 +26,14 @@ void CommandLineInput::commandLineLoop()
 		//std::cout << "CMD: " << cmd << "\n";
 		argMutex.lock();
 		extraCmd.split(' ', 0, arguments);
-		if(arguments[0] == "a")
+		if(arguments[0] == "aaa")
+		{
+			//std::cout << "special cmd" << std::endl;
 			arguments.clear();
-			
+		}
 		else if(arguments.size() > 0)
 			cmdToHandle = true;
 		argMutex.unlock();
-		statusMutex.unlock();
 		//Sleep(0);
     }
 }

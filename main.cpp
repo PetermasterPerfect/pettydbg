@@ -7,8 +7,9 @@
 int main(int argc, char** argv)
 {
 	Debugger dbg("test.exe");
-	std::thread thInput(&Debugger::enterDebuggerLoop, &dbg);
-	dbg.commandLineLoop();
+	//std::thread thInput(&Debugger::enterDebuggerLoop, &dbg);
+	//dbg.commandLineLoop();
+	dbg.enterDebuggerLoop();
 /*	
 	if(argc < 2)
 	{

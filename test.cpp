@@ -1,15 +1,14 @@
-#include <iostream>
-#include <sstream>
-#include <string>
+#include <cstdio>
 using namespace std;
 
 int main() {
-
-	std::string buf;
-	std::streambuf *backup = std::cin.rdbuf();
-    std::istringstream iss("\n");
-    std::cin.rdbuf(iss.rdbuf());
-	cin>>buf;
-	std::cin.rdbuf(backup);
+	int a=1;
+	int b=0;
+	while(1)
+	{
+		*(int*)0xccccc = 1;
+		//__asm("int3");
+		putchar('.');
+	}
     return 0;
 }

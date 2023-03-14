@@ -18,6 +18,7 @@ public:
 
 private:
 	DEBUG_EVENT debugEvent;
+	PROCESS_INFORMATION procInfo;
 	HANDLE hProcess;
 	bool isAttached;
 	bool isRunning;

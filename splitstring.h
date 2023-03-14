@@ -2,7 +2,7 @@
 #include <string>
 #include <vector>
 
-class splitstring : public std::string {
+class splitstring : public std::string { // ***
 	
 public:
     std::vector<std::string> flds;

@@ -31,11 +31,11 @@ Debugger::Debugger(DWORD pid) : CommandLineInput("Running")
 	isRunning = true;
 }
 
-void Debugger::foolCin()
+void Debugger::foolCin() // ***
 {
 	std::string buf;
 	std::streambuf *backup = std::cin.rdbuf();
-    std::istringstream iss("\n");
+    std::istringstream iss("aaa\n");
     std::cin.rdbuf(iss.rdbuf());
 	std::cin>>buf;
 	std::cin.rdbuf(backup);
@@ -79,71 +79,113 @@ void Debugger::handleCmd()
 
 void Debugger::enterDebuggerLoop()
 {
+	/*fprintf(stderr, "ContinueDebugEvent %x %x %i %i\n",
+		ContinueDebugEvent(procInfo.dwProcessId, procInfo.dwThreadId, DBG_CONTINUE), GetLastError(),
+		procInfo.dwProcessId,
+		procInfo.dwThreadId);*/
+	memset(&debugEvent, 0, sizeof(DEBUG_EVENT));
 	//std::thread thInput(&Debugger::commandLineLoop, this);
 	while(true)
 	{
-		if(!WaitForDebugEvent(&debugEvent, 100))
+		if(!WaitForDebugEvent(&debugEvent, 1000))
 		{
 			//fprintf(stderr, "WaitFordebugEvent error [%lx]\n", GetLastError());
-			handleCmd();
+			//handleCmd();
 		}
-		switch(debugEvent.u.Exception.ExceptionRecord.ExceptionCode)
+		
+		switch(debugEvent.dwDebugEventCode)
 		{
 			
 			case EXCEPTION_DEBUG_EVENT:
 			{
 				exceptionEvent();
+				EXCEPTION_DEBUG_INFO& exception = debugEvent.u.Exception;
+				switch( exception.ExceptionRecord.ExceptionCode)
+				{
+				case STATUS_BREAKPOINT:
+					printf("breakpoint %i", debugEvent.dwThreadId);
+					break;
+
+				default:
+					if(exception.dwFirstChance == 1)
+					{
+						printf("first chance\n");
+					}		
+				}
+				ContinueDebugEvent(debugEvent.dwProcessId, 
+							debugEvent.dwThreadId,
+							DBG_CONTINUE);
 				break;
 			}
 			
 			case CREATE_THREAD_DEBUG_EVENT:
 			{
 				createThreadEvent();
+				ContinueDebugEvent(debugEvent.dwProcessId, 
+					debugEvent.dwThreadId,
+					DBG_CONTINUE);
 				break;
 			}
 			
 			case CREATE_PROCESS_DEBUG_EVENT:
 			{
 				createProcessEvent();
+				ContinueDebugEvent(debugEvent.dwProcessId, debugEvent.dwThreadId, DBG_CONTINUE);
 				break;
 			}
 			
 			case EXIT_THREAD_DEBUG_EVENT:
 			{
 				exitThreadEvent();
+				ContinueDebugEvent(debugEvent.dwProcessId, 
+					debugEvent.dwThreadId,
+					DBG_CONTINUE);
 				break;
 			}
 			
 			case EXIT_PROCESS_DEBUG_EVENT:
 			{
 				exitThreadEvent();
+				ContinueDebugEvent(debugEvent.dwProcessId, 
+					debugEvent.dwThreadId,
+					DBG_CONTINUE);
 				break;
 			}
 			
 			case LOAD_DLL_DEBUG_EVENT:
 			{
 				loadDllEvent();
+				ContinueDebugEvent(debugEvent.dwProcessId, debugEvent.dwThreadId, DBG_CONTINUE);
 				break;
 			}
 			
 			case UNLOAD_DLL_DEBUG_EVENT:
 			{
 				unloadDllEvent();
+				ContinueDebugEvent(debugEvent.dwProcessId, 
+					debugEvent.dwThreadId,
+					DBG_CONTINUE);
 				break;
 			}
 			case OUTPUT_DEBUG_STRING_EVENT:
 			{
 				outputDebugStringEvent();
+				ContinueDebugEvent(debugEvent.dwProcessId, 
+					debugEvent.dwThreadId,
+					DBG_CONTINUE);
 				break;
 			}
 			case RIP_EVENT:
 			{
 				ripEvent();
+				ContinueDebugEvent(debugEvent.dwProcessId, 
+					debugEvent.dwThreadId,
+					DBG_CONTINUE);
 				break;
 			}			
 			default:
 			{
-				//printf("default %x, %x:\n", debugEvent.dwDebugEventCode, debugEvent.u.Exception.ExceptionRecord.ExceptionCode);
+				printf("default %x, %x:\n", debugEvent.dwDebugEventCode, debugEvent.u.Exception.ExceptionRecord.ExceptionCode);
 			}
 		}
 	}
@@ -158,7 +200,16 @@ void Debugger::continueCommand()
 
 void Debugger::runCommand()
 {
-	ContinueDebugEvent(debugEvent.dwProcessId, debugEvent.dwThreadId, DBG_CONTINUE);
+	/*fprintf(stderr, "ContinueDebugEvent %x %x %i %i\n",
+		ContinueDebugEvent(procInfo.dwProcessId, procInfo.dwThreadId, DBG_CONTINUE), GetLastError(),
+		procInfo.dwProcessId,
+		procInfo.dwThreadId);*/
+	fprintf(stderr, "xResumeThread %x ", ResumeThread(procInfo.hThread));
+	ContinueDebugEvent(procInfo.dwProcessId, procInfo.dwThreadId, DBG_CONTINUE);
+	statusMutex.lock();
+	status = "Running";
+	statusMutex.unlock();
+	//foolCin();
 	isRunning = true;
 }
 
@@ -166,6 +217,12 @@ void Debugger::breakCommand()
 {
 	if(!DebugBreakProcess(hProcess))
 		fprintf(stderr, "DebugBreakProcess failed %lx\n", GetLastError());
+	
+	statusMutex.lock();
+	status = "Break";
+	statusMutex.unlock();
+	//foolCin();
+	isRunning = false;
 }
 
 void Debugger::changeStatus(std::string newSt)
@@ -179,7 +236,7 @@ void Debugger::exceptionEvent()
 {
 	EXCEPTION_RECORD *expceptionRecord = &debugEvent.u.Exception.ExceptionRecord;
 	std::cout << "exceptionEvent\n";
-	changeStatus("Exception");
+	//changeStatus("Exception");
 	isRunning = false;
 	printf("Exceptions code %lx at address %p\n", expceptionRecord->ExceptionCode, expceptionRecord->ExceptionAddress);
 	
@@ -231,30 +288,29 @@ void Debugger::ripEvent()
 HANDLE Debugger::startup(const char *cmdLine)
 {
     STARTUPINFOA si;
-    PROCESS_INFORMATION pi;
     bool creationResult;
 
     ZeroMemory(&si, sizeof(si));
     si.cb = sizeof(si);
-    ZeroMemory(&pi, sizeof(PROCESS_INFORMATION));
+    ZeroMemory(&procInfo, sizeof(PROCESS_INFORMATION));
 
-	si.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE);
+/*	si.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE);
 	si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
 	si.hStdError = GetStdHandle(STD_ERROR_HANDLE);
-	si.dwFlags |= STARTF_USESTDHANDLES;
+	si.dwFlags |= STARTF_USESTDHANDLES;*/
     creationResult = CreateProcessA
     (
-        NULL,   // the path
-        (char*)cmdLine,                // Command line
+        (char*)cmdLine,   // the path
+        NULL,                // Command line
         NULL,                   // Process handle not inheritable
         NULL,                   // Thread handle not inheritable
-        TRUE,                  // Set handle inheritance to FALSE
-        DEBUG_PROCESS ,//| CREATE_SUSPENDED,
+        FALSE,                  // Set handle inheritance to FALSE
+        DEBUG_ONLY_THIS_PROCESS | CREATE_NEW_CONSOLE,
         NULL,           // Use parent's environment block
         NULL,           // Use parent's starting directory
         &si,            // Pointer to STARTUPINFO structure
-        &pi           // Pointer to PROCESS_INFORMATION structure
+        &procInfo           // Pointer to PROCESS_INFORMATION structure
         );
-
-    return pi.hProcess;
+	printf("creationResult %i\n", creationResult);
+    return procInfo.hProcess;
 }
