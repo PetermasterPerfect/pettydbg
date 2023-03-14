@@ -41,10 +41,22 @@ void Debugger::foolCin() // ***
 	std::cin.rdbuf(backup);
 }
 
-template<class... Args> void Debugger::debuggerPrint(Args... args)
+template<class... Args> void Debugger::debuggerMessage(Args... args)
 {
-	foolCin();
-	(std::cout << ... << args) << std::endl;
+	mDbgMess.lock();
+	std::stringstream sstream;
+	(sstream << ... << args) << std::endl;
+	dbgMess = sstream.str();
+	mDbgMess.unlock();
+}
+
+template<class... Args> void Debugger::cmdReturn(Args... args)
+{
+	mCmdRet.lock();
+	std::stringstream sstream;
+	(sstream << ... << args);
+	cmdRet = sstream.str();
+	mCmdRet.unlock();
 }
 
 template <typename T> std::string Debugger::asHex(T num)
@@ -58,7 +70,7 @@ void Debugger::handleCmd()
 {
 	argMutex.lock();
 	//puts("handleCmd");
-	if(cmdToHandle)
+	if(cmdToHandle && arguments.size() >= 1)
 	{
 		//puts("in cmdToHandle if");
 		if(isRunning)
@@ -66,16 +78,19 @@ void Debugger::handleCmd()
 			if(arguments[0] == "break")
 				breakCommand();
 			else
-				debuggerPrint("Process is running, only available command is \"break\"");
+				cmdReturn("Process is running, only available command is \"break\"\n");
 		}
 		else
 		{
 			if(arguments[0] == "run")
-				runCommand();			
+			{
+				runCommand();
+				cmdReturn("xxx");
+			}
 			else if(arguments[0] == "c")
 				continueCommand();
 			else
-				debuggerPrint("Command isnt recognized");
+				cmdReturn("Command isnt recognized\n");
 		}
 		arguments.clear();
 		cmdToHandle = false;
@@ -88,109 +103,114 @@ void Debugger::enterDebuggerLoop()
 	memset(&debugEvent, 0, sizeof(DEBUG_EVENT));
 	while(true)
 	{
-		if(!WaitForDebugEvent(&debugEvent, 1000))
+		if(!WaitForDebugEvent(&debugEvent, 10))
 		{
 			//fprintf(stderr, "WaitFordebugEvent error [%lx]\n", GetLastError());
 			handleCmd();
 		}
-		
-		switch(debugEvent.dwDebugEventCode)
-		{
-			
-			case EXCEPTION_DEBUG_EVENT:
-			{
-				exceptionEvent();
-				EXCEPTION_DEBUG_INFO& exception = debugEvent.u.Exception;
-				switch( exception.ExceptionRecord.ExceptionCode)
-				{
-				case STATUS_BREAKPOINT:
-					printf("breakpoint %i", debugEvent.dwThreadId	);
-					break;
-
-				default:
-					if(exception.dwFirstChance == 1)
-					{
-						printf("first chance\n");
-					}		
-				}
-				ContinueDebugEvent(debugEvent.dwProcessId, 
-							debugEvent.dwThreadId,
-							DBG_CONTINUE);
-				break;
-			}
-			
-			case CREATE_THREAD_DEBUG_EVENT:
-			{
-				createThreadEvent();
-				ContinueDebugEvent(debugEvent.dwProcessId, 
-					debugEvent.dwThreadId,
-					DBG_CONTINUE);
-				break;
-			}
-			
-			case CREATE_PROCESS_DEBUG_EVENT:
-			{
-				createProcessEvent();
-				ContinueDebugEvent(debugEvent.dwProcessId, debugEvent.dwThreadId, DBG_CONTINUE);
-				break;
-			}
-			
-			case EXIT_THREAD_DEBUG_EVENT:
-			{
-				exitThreadEvent();
-				ContinueDebugEvent(debugEvent.dwProcessId, 
-					debugEvent.dwThreadId,
-					DBG_CONTINUE);
-				break;
-			}
-			
-			case EXIT_PROCESS_DEBUG_EVENT:
-			{
-				exitThreadEvent();
-				ContinueDebugEvent(debugEvent.dwProcessId, 
-					debugEvent.dwThreadId,
-					DBG_CONTINUE);
-				break;
-			}
-			
-			case LOAD_DLL_DEBUG_EVENT:
-			{
-				loadDllEvent();
-				ContinueDebugEvent(debugEvent.dwProcessId, debugEvent.dwThreadId, DBG_CONTINUE);
-				break;
-			}
-			
-			case UNLOAD_DLL_DEBUG_EVENT:
-			{
-				unloadDllEvent();
-				ContinueDebugEvent(debugEvent.dwProcessId, 
-					debugEvent.dwThreadId,
-					DBG_CONTINUE);
-				break;
-			}
-			case OUTPUT_DEBUG_STRING_EVENT:
-			{
-				outputDebugStringEvent();
-				ContinueDebugEvent(debugEvent.dwProcessId, 
-					debugEvent.dwThreadId,
-					DBG_CONTINUE);
-				break;
-			}
-			case RIP_EVENT:
-			{
-				ripEvent();
-				ContinueDebugEvent(debugEvent.dwProcessId, 
-					debugEvent.dwThreadId,
-					DBG_CONTINUE);
-				break;
-			}			
-			default:
-			{
-				printf("default %x, %x:\n", debugEvent.dwDebugEventCode, debugEvent.u.Exception.ExceptionRecord.ExceptionCode);
-			}
-		}
+		switchCaseTree();
+		debuggerMessage("dwDebugEventCode ", debugEvent.dwDebugEventCode);
 	}
 
+}
+
+void Debugger::switchCaseTree()
+{
+	switch(debugEvent.dwDebugEventCode)
+	{
+		
+		case EXCEPTION_DEBUG_EVENT:
+		{
+			exceptionEvent();
+			EXCEPTION_DEBUG_INFO& exception = debugEvent.u.Exception;
+			switch( exception.ExceptionRecord.ExceptionCode)
+			{
+			case STATUS_BREAKPOINT:
+				debuggerMessage("breakpoint, thread id ", debugEvent.dwThreadId);
+				break;
+
+			default:
+				if(exception.dwFirstChance == 1)
+				{
+					debuggerMessage("first chance");
+				}		
+			}
+			//ContinueDebugEvent(debugEvent.dwProcessId, 
+			//			debugEvent.dwThreadId,
+			//			DBG_CONTINUE);
+			break;
+		}
+		
+		case CREATE_THREAD_DEBUG_EVENT:
+		{
+			createThreadEvent();
+			ContinueDebugEvent(debugEvent.dwProcessId, 
+				debugEvent.dwThreadId,
+				DBG_CONTINUE);
+			break;
+		}
+		
+		case CREATE_PROCESS_DEBUG_EVENT:
+		{
+			createProcessEvent();
+			ContinueDebugEvent(debugEvent.dwProcessId, debugEvent.dwThreadId, DBG_CONTINUE);
+			break;
+		}
+		
+		case EXIT_THREAD_DEBUG_EVENT:
+		{
+			exitThreadEvent();
+			ContinueDebugEvent(debugEvent.dwProcessId, 
+				debugEvent.dwThreadId,
+				DBG_CONTINUE);
+			break;
+		}
+		
+		case EXIT_PROCESS_DEBUG_EVENT:
+		{
+			exitThreadEvent();
+			ContinueDebugEvent(debugEvent.dwProcessId, 
+				debugEvent.dwThreadId,
+				DBG_CONTINUE);
+			break;
+		}
+		
+		case LOAD_DLL_DEBUG_EVENT:
+		{
+			loadDllEvent();
+			ContinueDebugEvent(debugEvent.dwProcessId, debugEvent.dwThreadId, DBG_CONTINUE);
+			break;
+		}
+		
+		case UNLOAD_DLL_DEBUG_EVENT:
+		{
+			unloadDllEvent();
+			ContinueDebugEvent(debugEvent.dwProcessId, 
+				debugEvent.dwThreadId,
+				DBG_CONTINUE);
+			break;
+		}
+		case OUTPUT_DEBUG_STRING_EVENT:
+		{
+			outputDebugStringEvent();
+			ContinueDebugEvent(debugEvent.dwProcessId, 
+				debugEvent.dwThreadId,
+				DBG_CONTINUE);
+			break;
+		}
+		case RIP_EVENT:
+		{
+			ripEvent();
+			ContinueDebugEvent(debugEvent.dwProcessId, 
+				debugEvent.dwThreadId,
+				DBG_CONTINUE);
+			break;
+		}			
+		default:
+		{
+			//printf("default %x, %x:\n", debugEvent.dwDebugEventCode, debugEvent.u.Exception.ExceptionRecord.ExceptionCode);
+		}
+	}
 }
 
 void Debugger::continueCommand()
@@ -201,7 +221,6 @@ void Debugger::continueCommand()
 
 void Debugger::runCommand()
 {
-	fprintf(stderr, "xResumeThread %x ", ResumeThread(procInfo.hThread));
 	ContinueDebugEvent(procInfo.dwProcessId, procInfo.dwThreadId, DBG_CONTINUE);
 	statusMutex.lock();
 	status = "Running";
@@ -213,7 +232,7 @@ void Debugger::runCommand()
 void Debugger::breakCommand()
 {
 	if(!DebugBreakProcess(hProcess))
-		fprintf(stderr, "DebugBreakProcess failed %lx\n", GetLastError());
+		debuggerMessage("DebugBreakProcess failed %lx\n", GetLastError());
 	
 	statusMutex.lock();
 	status = "Break";
@@ -232,10 +251,10 @@ void Debugger::changeStatus(std::string newSt)
 void Debugger::exceptionEvent()
 {
 	EXCEPTION_RECORD *expceptionRecord = &debugEvent.u.Exception.ExceptionRecord;
-	debuggerPrint("exceptionEvent");
+	debuggerMessage("exceptionEvent");
 	//changeStatus("Exception");
 	isRunning = false;
-	debuggerPrint("Exceptions code ", 
+	debuggerMessage("Exceptions code ", 
 		asHex(expceptionRecord->ExceptionCode),
 		" at address ", 
 		expceptionRecord->ExceptionAddress);
@@ -244,45 +263,45 @@ void Debugger::exceptionEvent()
 }
 void Debugger::createThreadEvent()
 {
-	debuggerPrint("New thread with id ", debugEvent.dwThreadId);
+	debuggerMessage("New thread with id ", debugEvent.dwThreadId);
 }
 
 void Debugger::createProcessEvent()
 {
-	debuggerPrint("Starting process with id ", debugEvent.dwProcessId);
+	debuggerMessage("Create Process Event with id ", debugEvent.dwProcessId);
 }
 
 void Debugger::exitThreadEvent()
 {
-	debuggerPrint("Exiting thread with code ", debugEvent.u.ExitThread.dwExitCode);
+	debuggerMessage("Exiting thread with code ", debugEvent.u.ExitThread.dwExitCode);
 }
 
 void Debugger::exitProcessEvent()
 {
-	debuggerPrint("Exiting process with code ", debugEvent.u.ExitProcess.dwExitCode);
+	debuggerMessage("Exiting process with code ", debugEvent.u.ExitProcess.dwExitCode);
 }
 
 void Debugger::loadDllEvent()
 {
 	if(!isAttached)
 	{
-		debuggerPrint("loadDllEvent: TODO");
+		debuggerMessage("loadDllEvent: TODO");
 	}
 }
 
 void Debugger::unloadDllEvent()
 {
-	std::cout << "unloadDllEvent\n";
+	debuggerMessage("unloadDllEvent");
 }
 
 void Debugger::outputDebugStringEvent()
 {
-	std::cout << "outputDebugString\n";
+	debuggerMessage("outputDebugString\n");
 }
 
 void Debugger::ripEvent()
 {
-	std::cout << "RIP error number " << debugEvent.u.RipInfo.dwError << "\n";
+	debuggerMessage("RIP error number ", debugEvent.u.RipInfo.dwError);
 }
 
 HANDLE Debugger::startup(const char *cmdLine)

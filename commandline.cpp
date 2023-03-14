@@ -14,6 +14,7 @@ std::string CommandLineInput::trim(std::string& str) // ***
 void CommandLineInput::commandLineLoop()
 {
 	std::string cmd;
+	std::string ret;
 	while(status!="exit")
     {
 		statusMutex.lock();
@@ -26,14 +27,37 @@ void CommandLineInput::commandLineLoop()
 		//std::cout << "CMD: " << cmd << "\n";
 		argMutex.lock();
 		extraCmd.split(' ', 0, arguments);
-		if(arguments[0] == "aaa")
-		{
-			//std::cout << "special cmd" << std::endl;
-			arguments.clear();
-		}
-		else if(arguments.size() > 0)
+		if(arguments.size() > 0)
 			cmdToHandle = true;
+		else
+		{
+			argMutex.unlock();
+			continue;
+		}
 		argMutex.unlock();
-		//Sleep(0);
+		handleDbgMessage();
+		handleCmdReturn();
     }
+}
+
+void CommandLineInput::handleDbgMessage()
+{
+	mDbgMess.lock();
+	if(!dbgMess.empty())
+		std::cout << dbgMess;
+	dbgMess.clear();
+	mDbgMess.unlock();
+}
+
+void CommandLineInput::handleCmdReturn()
+{
+	std::unique_lock lock(mCmdRet);
+	while(cmdRet.empty())
+		cvCmdRet.wait(lock);
+	
+	//if(cmdRet != "xxx")
+	std::cout << cmdRet;
+	cmdRet.clear();
+	lock.unlock();
+	cvCmdRet.notify_one();
 }
