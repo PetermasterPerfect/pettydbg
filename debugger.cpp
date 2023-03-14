@@ -41,11 +41,17 @@ void Debugger::foolCin() // ***
 	std::cin.rdbuf(backup);
 }
 
-template<class... Args>
-void Debugger::debuggerPrint(Args... args)
+template<class... Args> void Debugger::debuggerPrint(Args... args)
 {
 	foolCin();
 	(std::cout << ... << args) << std::endl;
+}
+
+template <typename T> std::string Debugger::asHex(T num)
+{
+	std::stringstream sstream;
+	sstream << std::hex << num;
+	return sstream.str();
 }
 
 void Debugger::handleCmd()
@@ -57,7 +63,6 @@ void Debugger::handleCmd()
 		//puts("in cmdToHandle if");
 		if(isRunning)
 		{
-			
 			if(arguments[0] == "break")
 				breakCommand();
 			else
@@ -80,18 +85,13 @@ void Debugger::handleCmd()
 
 void Debugger::enterDebuggerLoop()
 {
-	/*fprintf(stderr, "ContinueDebugEvent %x %x %i %i\n",
-		ContinueDebugEvent(procInfo.dwProcessId, procInfo.dwThreadId, DBG_CONTINUE), GetLastError(),
-		procInfo.dwProcessId,
-		procInfo.dwThreadId);*/
 	memset(&debugEvent, 0, sizeof(DEBUG_EVENT));
-	//std::thread thInput(&Debugger::commandLineLoop, this);
 	while(true)
 	{
 		if(!WaitForDebugEvent(&debugEvent, 1000))
 		{
 			//fprintf(stderr, "WaitFordebugEvent error [%lx]\n", GetLastError());
-			//handleCmd();
+			handleCmd();
 		}
 		
 		switch(debugEvent.dwDebugEventCode)
@@ -235,9 +235,8 @@ void Debugger::exceptionEvent()
 	debuggerPrint("exceptionEvent");
 	//changeStatus("Exception");
 	isRunning = false;
-	//TODO: print ExceptionCode as hex
 	debuggerPrint("Exceptions code ", 
-		expceptionRecord->ExceptionCode,
+		asHex(expceptionRecord->ExceptionCode),
 		" at address ", 
 		expceptionRecord->ExceptionAddress);
 	

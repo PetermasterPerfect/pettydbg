@@ -28,11 +28,13 @@ private:
 	void runCommand();
 	void breakCommand();
 	
+	
+	template<class... Args> void debuggerPrint(Args ...);
+	void foolCin();	
+	template <typename T> std::string asHex(T);
+	
 	void handleCmd();
 	void changeStatus(std::string);
-	void foolCin();
-	template<class... Args>
-	void debuggerPrint(Args ...);	
 	void exceptionEvent();
 	void createThreadEvent();
 	void createProcessEvent();
