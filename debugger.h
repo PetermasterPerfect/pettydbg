@@ -31,7 +31,8 @@ private:
 	void handleCmd();
 	void changeStatus(std::string);
 	void foolCin();
-	void debuggerPrint(std::string);	
+	template<class... Args>
+	void debuggerPrint(Args ...);	
 	void exceptionEvent();
 	void createThreadEvent();
 	void createProcessEvent();

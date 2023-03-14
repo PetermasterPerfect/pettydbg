@@ -41,10 +41,11 @@ void Debugger::foolCin() // ***
 	std::cin.rdbuf(backup);
 }
 
-void Debugger::debuggerPrint(std::string str)
+template<class... Args>
+void Debugger::debuggerPrint(Args... args)
 {
 	foolCin();
-	std::cout << str << std::endl;
+	(std::cout << ... << args) << std::endl;
 }
 
 void Debugger::handleCmd()
@@ -103,7 +104,7 @@ void Debugger::enterDebuggerLoop()
 				switch( exception.ExceptionRecord.ExceptionCode)
 				{
 				case STATUS_BREAKPOINT:
-					printf("breakpoint %i", debugEvent.dwThreadId);
+					printf("breakpoint %i", debugEvent.dwThreadId	);
 					break;
 
 				default:
@@ -200,10 +201,6 @@ void Debugger::continueCommand()
 
 void Debugger::runCommand()
 {
-	/*fprintf(stderr, "ContinueDebugEvent %x %x %i %i\n",
-		ContinueDebugEvent(procInfo.dwProcessId, procInfo.dwThreadId, DBG_CONTINUE), GetLastError(),
-		procInfo.dwProcessId,
-		procInfo.dwThreadId);*/
 	fprintf(stderr, "xResumeThread %x ", ResumeThread(procInfo.hThread));
 	ContinueDebugEvent(procInfo.dwProcessId, procInfo.dwThreadId, DBG_CONTINUE);
 	statusMutex.lock();
@@ -235,38 +232,42 @@ void Debugger::changeStatus(std::string newSt)
 void Debugger::exceptionEvent()
 {
 	EXCEPTION_RECORD *expceptionRecord = &debugEvent.u.Exception.ExceptionRecord;
-	std::cout << "exceptionEvent\n";
+	debuggerPrint("exceptionEvent");
 	//changeStatus("Exception");
 	isRunning = false;
-	printf("Exceptions code %lx at address %p\n", expceptionRecord->ExceptionCode, expceptionRecord->ExceptionAddress);
+	//TODO: print ExceptionCode as hex
+	debuggerPrint("Exceptions code ", 
+		expceptionRecord->ExceptionCode,
+		" at address ", 
+		expceptionRecord->ExceptionAddress);
 	
 	
 }
 void Debugger::createThreadEvent()
 {
-	std::cout << "New thread with id " << GetThreadId(debugEvent.u.CreateThread.hThread) << "\n";
+	debuggerPrint("New thread with id ", debugEvent.dwThreadId);
 }
 
 void Debugger::createProcessEvent()
 {
-	std::cout << "Starting process with id " << GetProcessId(debugEvent.u.CreateProcessInfo.hProcess) << "\n";
+	debuggerPrint("Starting process with id ", debugEvent.dwProcessId);
 }
 
 void Debugger::exitThreadEvent()
 {
-	std::cout << "Exiting thread with code " << debugEvent.u.ExitThread.dwExitCode<< "\n";
+	debuggerPrint("Exiting thread with code ", debugEvent.u.ExitThread.dwExitCode);
 }
 
 void Debugger::exitProcessEvent()
 {
-	std::cout << "Exiting process with code " << debugEvent.u.ExitProcess.dwExitCode << "\n";
+	debuggerPrint("Exiting process with code ", debugEvent.u.ExitProcess.dwExitCode);
 }
 
 void Debugger::loadDllEvent()
 {
 	if(!isAttached)
 	{
-		std::cout << "loadDllEvent: TODO\n";
+		debuggerPrint("loadDllEvent: TODO");
 	}
 }
 
