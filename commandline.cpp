@@ -17,46 +17,64 @@ void CommandLineInput::commandLineLoop()
 	std::string ret;
 	while(status!="exit")
     {
-		statusMutex.lock();
+		waitForContinue();
+		mxStatus.lock();
         std::cout << "(" << status << ") >>>";
-		statusMutex.unlock();
+		mxStatus.unlock();
         std::getline(std::cin, cmd);
         trim(cmd);
 		splitstring extraCmd(cmd.c_str());
 		//arguments.clean();
 		//std::cout << "CMD: " << cmd << "\n";
-		argMutex.lock();
+		mxArg.lock();
 		extraCmd.split(' ', 0, arguments);
 		if(arguments.size() > 0)
 			cmdToHandle = true;
 		else
 		{
-			argMutex.unlock();
+			mxArg.unlock();
 			continue;
 		}
-		argMutex.unlock();
+		mxArg.unlock();
+		std::cout << "sz: " << qDbgMess.size() << std::endl;
 		handleDbgMessage();
 		handleCmdReturn();
     }
 }
 
+void CommandLineInput::waitForContinue()
+{
+	std::unique_lock<std::mutex> lock(mxContinueDebugging);
+	mxStatus.lock();
+	while(status=="break");
+	{
+		mxStatus.unlock();
+		std::this_thread::sleep_for(std::chrono::milliseconds(50));
+		mxStatus.lock();
+	}
+	mxStatus.lock();
+}
+
 void CommandLineInput::handleDbgMessage()
 {
-	mDbgMess.lock();
-	if(!dbgMess.empty())
-		std::cout << dbgMess;
-	dbgMess.clear();
-	mDbgMess.unlock();
+	mxDbgMess.lock();
+	while(!qDbgMess.empty())
+	{
+		std::cout << qDbgMess.front();
+		qDbgMess.pop();
+	}
+	
+	mxDbgMess.unlock();
 }
 
 void CommandLineInput::handleCmdReturn()
 {
-	std::unique_lock lock(mCmdRet);
+	std::unique_lock lock(mxCmdRet);
 	while(cmdRet.empty())
 		cvCmdRet.wait(lock);
 	
-	//if(cmdRet != "xxx")
-	std::cout << cmdRet;
+	if(cmdRet != "xxx")
+		std::cout << cmdRet;
 	cmdRet.clear();
 	lock.unlock();
 	cvCmdRet.notify_one();

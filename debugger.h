@@ -5,7 +5,7 @@
 #include "commandline.h"
 
 // TODO: decide whether isRunning = false; should be in breakCommand oor in exceptionEvent
-// TODO: implement runCommand and continueCommand (they are the same now) 
+// TODO: implement runCommand and continueCommand (they do the same at the moment) 
 
 class Debugger : public CommandLineInput
 {
@@ -27,7 +27,6 @@ private:
 	void continueCommand();
 	void runCommand();
 	void breakCommand();
-	
 	
 	template<class... Args> void debuggerMessage(Args ...);
 	template<class... Args> void cmdReturn(Args ...);

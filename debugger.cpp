@@ -43,20 +43,22 @@ void Debugger::foolCin() // ***
 
 template<class... Args> void Debugger::debuggerMessage(Args... args)
 {
-	mDbgMess.lock();
+	mxDbgMess.lock();
 	std::stringstream sstream;
 	(sstream << ... << args) << std::endl;
-	dbgMess = sstream.str();
-	mDbgMess.unlock();
+	//dbgMess = sstream.str();
+	qDbgMess.push(sstream.str());
+	mxDbgMess.unlock();
 }
 
 template<class... Args> void Debugger::cmdReturn(Args... args)
 {
-	mCmdRet.lock();
+	std::unique_lock lock(mxCmdRet);
 	std::stringstream sstream;
 	(sstream << ... << args);
 	cmdRet = sstream.str();
-	mCmdRet.unlock();
+	lock.unlock();
+	cvCmdRet.notify_one();
 }
 
 template <typename T> std::string Debugger::asHex(T num)
@@ -66,9 +68,26 @@ template <typename T> std::string Debugger::asHex(T num)
 	return sstream.str();
 }
 
+void Debugger::enterDebuggerLoop()
+{
+	memset(&debugEvent, 0, sizeof(DEBUG_EVENT));
+	while(true)
+	{
+		if(!WaitForDebugEvent(&debugEvent, 50))
+		{
+			//fprintf(stderr, "WaitFordebugEvent error [%lx]\n", GetLastError());
+			handleCmd();
+		}
+		switchCaseTree();
+		//std::cout << "org: " << debugEvent.dwDebugEventCode << std::endl;
+		//debuggerMessage("dwDebugEventCode ", debugEvent.dwDebugEventCode);
+	}
+
+}
+
 void Debugger::handleCmd()
 {
-	argMutex.lock();
+	mxArg.lock();
 	//puts("handleCmd");
 	if(cmdToHandle && arguments.size() >= 1)
 	{
@@ -95,23 +114,7 @@ void Debugger::handleCmd()
 		arguments.clear();
 		cmdToHandle = false;
 	}
-	argMutex.unlock();
-}
-
-void Debugger::enterDebuggerLoop()
-{
-	memset(&debugEvent, 0, sizeof(DEBUG_EVENT));
-	while(true)
-	{
-		if(!WaitForDebugEvent(&debugEvent, 10))
-		{
-			//fprintf(stderr, "WaitFordebugEvent error [%lx]\n", GetLastError());
-			handleCmd();
-		}
-		switchCaseTree();
-		debuggerMessage("dwDebugEventCode ", debugEvent.dwDebugEventCode);
-	}
-
+	mxArg.unlock();
 }
 
 void Debugger::switchCaseTree()
@@ -144,16 +147,14 @@ void Debugger::switchCaseTree()
 		case CREATE_THREAD_DEBUG_EVENT:
 		{
 			createThreadEvent();
-			ContinueDebugEvent(debugEvent.dwProcessId, 
-				debugEvent.dwThreadId,
-				DBG_CONTINUE);
+			ContinueDebugEvent(debugEvent.dwProcessId, debugEvent.dwThreadId, DBG_CONTINUE);
 			break;
 		}
 		
 		case CREATE_PROCESS_DEBUG_EVENT:
 		{
 			createProcessEvent();
-			ContinueDebugEvent(debugEvent.dwProcessId, debugEvent.dwThreadId, DBG_CONTINUE);
+			//ContinueDebugEvent(debugEvent.dwProcessId, debugEvent.dwThreadId, DBG_CONTINUE);
 			break;
 		}
 		
@@ -216,15 +217,18 @@ void Debugger::switchCaseTree()
 void Debugger::continueCommand()
 {
 	ContinueDebugEvent(debugEvent.dwProcessId, debugEvent.dwThreadId, DBG_CONTINUE);
+	mxStatus.lock();
+	status = "Running";
+	mxStatus.unlock();
 	isRunning = true;
 }
 
 void Debugger::runCommand()
 {
 	ContinueDebugEvent(procInfo.dwProcessId, procInfo.dwThreadId, DBG_CONTINUE);
-	statusMutex.lock();
+	mxStatus.lock();
 	status = "Running";
-	statusMutex.unlock();
+	mxStatus.unlock();
 	//foolCin();
 	isRunning = true;
 }
@@ -232,20 +236,21 @@ void Debugger::runCommand()
 void Debugger::breakCommand()
 {
 	if(!DebugBreakProcess(hProcess))
-		debuggerMessage("DebugBreakProcess failed %lx\n", GetLastError());
+		//cmdReturn("DebugBreakProcess failed %lx\n", GetLastError());
 	
-	statusMutex.lock();
+	mxStatus.lock();
 	status = "Break";
-	statusMutex.unlock();
+	mxStatus.unlock();
 	//foolCin();
 	isRunning = false;
+	cmdReturn("xxx");
 }
 
 void Debugger::changeStatus(std::string newSt)
 {
-	statusMutex.lock();
+	mxStatus.lock();
 	status = newSt;
-	statusMutex.unlock();
+	mxStatus.unlock();
 }
 
 void Debugger::exceptionEvent()
@@ -254,6 +259,7 @@ void Debugger::exceptionEvent()
 	debuggerMessage("exceptionEvent");
 	//changeStatus("Exception");
 	isRunning = false;
+	status = "Break";
 	debuggerMessage("Exceptions code ", 
 		asHex(expceptionRecord->ExceptionCode),
 		" at address ", 
@@ -279,6 +285,9 @@ void Debugger::exitThreadEvent()
 void Debugger::exitProcessEvent()
 {
 	debuggerMessage("Exiting process with code ", debugEvent.u.ExitProcess.dwExitCode);
+	mxStatus.lock();
+	status = "Exit";
+	mxStatus.unlock();
 }
 
 void Debugger::loadDllEvent()
