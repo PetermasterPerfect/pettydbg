@@ -7,6 +7,8 @@
 // TODO: decide whether isRunning = false; should be in breakCommand oor in exceptionEvent
 // TODO: implement runCommand and continueCommand (they do the same at the moment) 
 
+BOOL WINAPI registerSignals(DWORD);
+
 class Debugger : public CommandLineInput
 {
 public:
@@ -15,6 +17,7 @@ public:
 	Debugger(DWORD pid);
 
 	void enterDebuggerLoop();
+	friend BOOL WINAPI registerSignals(DWORD);
 
 private:
 	DEBUG_EVENT debugEvent;

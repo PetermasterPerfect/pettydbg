@@ -30,7 +30,7 @@ protected:
 	std::atomic<bool> cmdToHandle;
 	void handleCmdReturn();
 	void handleDbgMessage();
-	void waitForContinue();
+	void waitForBreak();
 	
 	
 	std::string trim(std::string& str);

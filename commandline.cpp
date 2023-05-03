@@ -17,7 +17,7 @@ void CommandLineInput::commandLineLoop()
 	std::string ret;
 	while(status!="exit")
     {
-		waitForContinue();
+		waitForBreak();
 		mxStatus.lock();
         std::cout << "(" << status << ") >>>";
 		mxStatus.unlock();
@@ -42,17 +42,17 @@ void CommandLineInput::commandLineLoop()
     }
 }
 
-void CommandLineInput::waitForContinue()
+void CommandLineInput::waitForBreak()
 {
 	std::unique_lock<std::mutex> lock(mxContinueDebugging);
 	mxStatus.lock();
-	while(status=="break");
+	while(status=="running");
 	{
 		mxStatus.unlock();
 		std::this_thread::sleep_for(std::chrono::milliseconds(50));
 		mxStatus.lock();
 	}
-	mxStatus.lock();
+	mxStatus.unlock();
 }
 
 void CommandLineInput::handleDbgMessage()

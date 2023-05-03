@@ -1,15 +1,13 @@
 #include <fstream>
 #include "main.h"
 
-
-
+Debugger *dbg;
 // x86_64-w64-mingw32-g++ main.cpp debugger.cpp commandline.cpp splitstring.cpp -o dbg.exe -static -std=c++17
 int main(int argc, char** argv)
 {
-	Debugger dbg("test.exe");
-	std::thread thInput(&Debugger::commandLineLoop, &dbg);
-	//dbg.commandLineLoop();
-	dbg.enterDebuggerLoop();
+	dbg = new Debugger("test.exe");
+	std::thread thInput(&Debugger::commandLineLoop, dbg);
+	dbg->enterDebuggerLoop();
 /*	
 	if(argc < 2)
 	{

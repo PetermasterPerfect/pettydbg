@@ -1,4 +1,20 @@
 #include "debugger.h"
+extern Debugger *dbg;
+
+BOOL WINAPI registerSignals(DWORD dwCtrlType)
+{
+		if(dwCtrlType == CTRL_C_EVENT)
+		{
+			DebugActiveProcessStop(dbg->procInfo.dwProcessId);
+			ExitProcess(0xcc);
+		}
+		else if (dwCtrlType == CTRL_BREAK_EVENT)
+		{
+			if(dbg->status!="Break")
+				dbg->breakCommand();
+		}
+		return TRUE;
+	}
 
 Debugger::Debugger(const char *filePath) : CommandLineInput("Not running yet")  // filePath arg is basically cmd run by CreateProcess
 {
@@ -9,6 +25,7 @@ Debugger::Debugger(const char *filePath) : CommandLineInput("Not running yet")  
 	printf("Running %s with id %i\n", filePath, GetProcessId(hProcess));
 	isAttached = false;
 	isRunning = false;
+	SetConsoleCtrlHandler(registerSignals, TRUE);
 }
 
 Debugger::Debugger(DWORD pid) : CommandLineInput("Running")
@@ -29,6 +46,7 @@ Debugger::Debugger(DWORD pid) : CommandLineInput("Running")
 	printf("Attaching to process with id %l\n", pid);
 	isAttached = true;
 	isRunning = true;
+	SetConsoleCtrlHandler(registerSignals, TRUE);
 }
 
 void Debugger::foolCin() // ***
@@ -236,12 +254,10 @@ void Debugger::runCommand()
 void Debugger::breakCommand()
 {
 	if(!DebugBreakProcess(hProcess))
-		//cmdReturn("DebugBreakProcess failed %lx\n", GetLastError());
-	
+		return;
 	mxStatus.lock();
 	status = "Break";
 	mxStatus.unlock();
-	//foolCin();
 	isRunning = false;
 	cmdReturn("xxx");
 }
