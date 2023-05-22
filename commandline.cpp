@@ -11,43 +11,28 @@ std::string CommandLineInput::trim(std::string& str) // ***
     return str;
 }
 
-void CommandLineInput::commandLineLoop()
+void CommandLineInput::commandLineInterface()
 {
 	std::string cmd;
-	std::string ret;
-	while(status!="exit")
-    {
-		waitForBreak();
-		mxStatus.lock();
-        std::cout << "(" << status << ") >>>";
-		mxStatus.unlock();
-        std::getline(std::cin, cmd);
-        trim(cmd);
-		splitstring extraCmd(cmd.c_str());
-		//arguments.clean();
-		//std::cout << "CMD: " << cmd << "\n";
-		mxArg.lock();
-		extraCmd.split(' ', 0, arguments);
-		if(arguments.size() > 0)
-			cmdToHandle = true;
-		else
-		{
-			mxArg.unlock();
-			continue;
-		}
-		mxArg.unlock();
-		std::cout << "sz: " << qDbgMess.size() << std::endl;
-		handleDbgMessage();
-		handleCmdReturn();
-    }
+    printCommandPrompt();
+    std::getline(std::cin, cmd);
+	trim(cmd);
+	splitstring extraCmd(cmd.c_str());
+	extraCmd.split(' ', 0, arguments);
+	if(arguments.size() > 0)
+		cmdToHandle = true;
+}
+
+void CommandLineInput::printCommandPrompt()
+{
+	std::cout << "(" << status << ") >>>";
 }
 
 void CommandLineInput::waitForBreak()
 {
-	std::unique_lock<std::mutex> lock(mxContinueDebugging);
-	mxStatus.lock();
-	while(status=="running");
+	while(status=="Running");
 	{
+		std::cout << status << std::endl;
 		mxStatus.unlock();
 		std::this_thread::sleep_for(std::chrono::milliseconds(50));
 		mxStatus.lock();
@@ -55,27 +40,3 @@ void CommandLineInput::waitForBreak()
 	mxStatus.unlock();
 }
 
-void CommandLineInput::handleDbgMessage()
-{
-	mxDbgMess.lock();
-	while(!qDbgMess.empty())
-	{
-		std::cout << qDbgMess.front();
-		qDbgMess.pop();
-	}
-	
-	mxDbgMess.unlock();
-}
-
-void CommandLineInput::handleCmdReturn()
-{
-	std::unique_lock lock(mxCmdRet);
-	while(cmdRet.empty())
-		cvCmdRet.wait(lock);
-	
-	if(cmdRet != "xxx")
-		std::cout << cmdRet;
-	cmdRet.clear();
-	lock.unlock();
-	cvCmdRet.notify_one();
-}

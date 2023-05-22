@@ -11,10 +11,10 @@ BOOL WINAPI registerSignals(DWORD dwCtrlType)
 		else if (dwCtrlType == CTRL_BREAK_EVENT)
 		{
 			if(dbg->status!="Break")
-				dbg->breakCommand();
+				dbg->breakSignal();
 		}
 		return TRUE;
-	}
+}
 
 Debugger::Debugger(const char *filePath) : CommandLineInput("Not running yet")  // filePath arg is basically cmd run by CreateProcess
 {
@@ -49,35 +49,11 @@ Debugger::Debugger(DWORD pid) : CommandLineInput("Running")
 	SetConsoleCtrlHandler(registerSignals, TRUE);
 }
 
-void Debugger::foolCin() // ***
-{
-	std::string buf;
-	std::streambuf *backup = std::cin.rdbuf();
-    std::istringstream iss("aaa\n");
-    std::cin.rdbuf(iss.rdbuf());
-	std::cin>>buf;
-	std::cin.rdbuf(backup);
-}
-
 template<class... Args> void Debugger::debuggerMessage(Args... args)
 {
-	mxDbgMess.lock();
-	std::stringstream sstream;
-	(sstream << ... << args) << std::endl;
-	//dbgMess = sstream.str();
-	qDbgMess.push(sstream.str());
-	mxDbgMess.unlock();
+	(std::cout << ... << args) << std::endl;
 }
 
-template<class... Args> void Debugger::cmdReturn(Args... args)
-{
-	std::unique_lock lock(mxCmdRet);
-	std::stringstream sstream;
-	(sstream << ... << args);
-	cmdRet = sstream.str();
-	lock.unlock();
-	cvCmdRet.notify_one();
-}
 
 template <typename T> std::string Debugger::asHex(T num)
 {
@@ -91,52 +67,41 @@ void Debugger::enterDebuggerLoop()
 	memset(&debugEvent, 0, sizeof(DEBUG_EVENT));
 	while(true)
 	{
-		if(!WaitForDebugEvent(&debugEvent, 50))
+		if(isRunning == false)
 		{
-			//fprintf(stderr, "WaitFordebugEvent error [%lx]\n", GetLastError());
-			handleCmd();
+			commandLineInterface();
+			if(cmdToHandle == true)
+				handleCmd();				
 		}
+		
+		WaitForDebugEvent(&debugEvent, 1);
 		switchCaseTree();
-		//std::cout << "org: " << debugEvent.dwDebugEventCode << std::endl;
-		//debuggerMessage("dwDebugEventCode ", debugEvent.dwDebugEventCode);
 	}
 
 }
 
 void Debugger::handleCmd()
 {
-	mxArg.lock();
-	//puts("handleCmd");
 	if(cmdToHandle && arguments.size() >= 1)
 	{
-		//puts("in cmdToHandle if");
-		if(isRunning)
+		if(arguments[0] == "run")
 		{
-			if(arguments[0] == "break")
-				breakCommand();
-			else
-				cmdReturn("Process is running, only available command is \"break\"\n");
+			runCommand();
 		}
+		else if(arguments[0] == "c")
+			continueCommand();
 		else
-		{
-			if(arguments[0] == "run")
-			{
-				runCommand();
-				cmdReturn("xxx");
-			}
-			else if(arguments[0] == "c")
-				continueCommand();
-			else
-				cmdReturn("Command isnt recognized\n");
-		}
+			debuggerMessage("Command isnt recognized\n");
 		arguments.clear();
 		cmdToHandle = false;
 	}
-	mxArg.unlock();
 }
 
 void Debugger::switchCaseTree()
 {
+	if(status == "Not running yet")
+		return;
+	
 	switch(debugEvent.dwDebugEventCode)
 	{
 		
@@ -146,7 +111,7 @@ void Debugger::switchCaseTree()
 			EXCEPTION_DEBUG_INFO& exception = debugEvent.u.Exception;
 			switch( exception.ExceptionRecord.ExceptionCode)
 			{
-			case STATUS_BREAKPOINT:
+			case EXCEPTION_BREAKPOINT:
 				debuggerMessage("breakpoint, thread id ", debugEvent.dwThreadId);
 				break;
 
@@ -156,9 +121,13 @@ void Debugger::switchCaseTree()
 					debuggerMessage("first chance");
 				}		
 			}
-			//ContinueDebugEvent(debugEvent.dwProcessId, 
-			//			debugEvent.dwThreadId,
-			//			DBG_CONTINUE);
+			if(exception.dwFirstChance == 1)
+			{
+				debuggerMessage("first chance");
+				//ContinueDebugEvent(debugEvent.dwProcessId, 
+				//		debugEvent.dwThreadId,
+				//		DBG_CONTINUE);
+			}
 			break;
 		}
 		
@@ -172,7 +141,7 @@ void Debugger::switchCaseTree()
 		case CREATE_PROCESS_DEBUG_EVENT:
 		{
 			createProcessEvent();
-			//ContinueDebugEvent(debugEvent.dwProcessId, debugEvent.dwThreadId, DBG_CONTINUE);
+			ContinueDebugEvent(debugEvent.dwProcessId, debugEvent.dwThreadId, DBG_CONTINUE);
 			break;
 		}
 		
@@ -234,46 +203,30 @@ void Debugger::switchCaseTree()
 
 void Debugger::continueCommand()
 {
-	ContinueDebugEvent(debugEvent.dwProcessId, debugEvent.dwThreadId, DBG_CONTINUE);
-	mxStatus.lock();
 	status = "Running";
-	mxStatus.unlock();
+	ContinueDebugEvent(debugEvent.dwProcessId, debugEvent.dwThreadId, DBG_CONTINUE);
 	isRunning = true;
 }
 
 void Debugger::runCommand()
 {
-	ContinueDebugEvent(procInfo.dwProcessId, procInfo.dwThreadId, DBG_CONTINUE);
-	mxStatus.lock();
 	status = "Running";
-	mxStatus.unlock();
-	//foolCin();
+	ContinueDebugEvent(procInfo.dwProcessId, procInfo.dwThreadId, DBG_CONTINUE);
 	isRunning = true;
 }
 
-void Debugger::breakCommand()
+void Debugger::breakSignal()
 {
 	if(!DebugBreakProcess(hProcess))
 		return;
-	mxStatus.lock();
 	status = "Break";
-	mxStatus.unlock();
 	isRunning = false;
-	cmdReturn("xxx");
-}
-
-void Debugger::changeStatus(std::string newSt)
-{
-	mxStatus.lock();
-	status = newSt;
-	mxStatus.unlock();
 }
 
 void Debugger::exceptionEvent()
 {
 	EXCEPTION_RECORD *expceptionRecord = &debugEvent.u.Exception.ExceptionRecord;
 	debuggerMessage("exceptionEvent");
-	//changeStatus("Exception");
 	isRunning = false;
 	status = "Break";
 	debuggerMessage("Exceptions code ", 
@@ -301,9 +254,7 @@ void Debugger::exitThreadEvent()
 void Debugger::exitProcessEvent()
 {
 	debuggerMessage("Exiting process with code ", debugEvent.u.ExitProcess.dwExitCode);
-	mxStatus.lock();
 	status = "Exit";
-	mxStatus.unlock();
 }
 
 void Debugger::loadDllEvent()

@@ -28,13 +28,12 @@ protected:
 	std::mutex mxArg;
 	std::mutex mxStatus;
 	std::atomic<bool> cmdToHandle;
-	void handleCmdReturn();
-	void handleDbgMessage();
 	void waitForBreak();
+	void printCommandPrompt();
 	
 	
 	std::string trim(std::string& str);
 public:
 	CommandLineInput(std::string);
-	void commandLineLoop();
+	void commandLineInterface();
 };
