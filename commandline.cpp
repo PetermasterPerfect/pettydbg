@@ -25,18 +25,5 @@ void CommandLineInput::commandLineInterface()
 
 void CommandLineInput::printCommandPrompt()
 {
-	std::cout << "(" << status << ") >>>";
+	std::cout << ">>> ";
 }
-
-void CommandLineInput::waitForBreak()
-{
-	while(status=="Running");
-	{
-		std::cout << status << std::endl;
-		mxStatus.unlock();
-		std::this_thread::sleep_for(std::chrono::milliseconds(50));
-		mxStatus.lock();
-	}
-	mxStatus.unlock();
-}
-

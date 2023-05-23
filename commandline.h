@@ -14,21 +14,10 @@
 class CommandLineInput
 {
 protected:
-//	SafeQueue<std::string> qCmdRet;
-	std::queue<std::string> qDbgMess;
-	//std::string dbgMess;
-	std::string cmdRet;
-	std::mutex mxDbgMess;
-	std::mutex mxCmdRet;
-	std::mutex mxContinueDebugging;
-	std::condition_variable cvCmdRet;
 
 	std::string status;
 	std::vector<std::string> arguments;
-	std::mutex mxArg;
-	std::mutex mxStatus;
 	std::atomic<bool> cmdToHandle;
-	void waitForBreak();
 	void printCommandPrompt();
 	
 	

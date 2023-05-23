@@ -35,7 +35,7 @@ private:
 	template <typename T> std::string asHex(T);
 	
 	void handleCmd();
-	void switchCaseTree();
+	void exceptionSwitchedCased();
 	void exceptionEvent();
 	void createThreadEvent();
 	void createProcessEvent();

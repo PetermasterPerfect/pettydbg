@@ -23,7 +23,6 @@ Debugger::Debugger(const char *filePath) : CommandLineInput("Not running yet")  
 		fprintf(stderr, "startup failed [%lx]\n", GetLastError());
 
 	printf("Running %s with id %i\n", filePath, GetProcessId(hProcess));
-	isAttached = false;
 	isRunning = false;
 	SetConsoleCtrlHandler(registerSignals, TRUE);
 }
@@ -44,7 +43,6 @@ Debugger::Debugger(DWORD pid) : CommandLineInput("Running")
 	}
 
 	printf("Attaching to process with id %l\n", pid);
-	isAttached = true;
 	isRunning = true;
 	SetConsoleCtrlHandler(registerSignals, TRUE);
 }
@@ -71,13 +69,11 @@ void Debugger::enterDebuggerLoop()
 		{
 			commandLineInterface();
 			if(cmdToHandle == true)
-				handleCmd();				
-		}
-		
+				handleCmd();		
+		}		
 		WaitForDebugEvent(&debugEvent, 1);
-		switchCaseTree();
+		exceptionSwitchedCased();
 	}
-
 }
 
 void Debugger::handleCmd()
@@ -91,13 +87,13 @@ void Debugger::handleCmd()
 		else if(arguments[0] == "c")
 			continueCommand();
 		else
-			debuggerMessage("Command isnt recognized\n");
+			debuggerMessage("Command isnt recognized");
 		arguments.clear();
 		cmdToHandle = false;
 	}
 }
 
-void Debugger::switchCaseTree()
+void Debugger::exceptionSwitchedCased()
 {
 	if(status == "Not running yet")
 		return;
@@ -290,7 +286,8 @@ HANDLE Debugger::startup(const char *cmdLine)
     ZeroMemory(&procInfo, sizeof(PROCESS_INFORMATION));
 
 /*	si.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE);
-	si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+	si.hStdInput = GetStdHandle(ST
+	D_INPUT_HANDLE);
 	si.hStdError = GetStdHandle(STD_ERROR_HANDLE);
 	si.dwFlags |= STARTF_USESTDHANDLES;*/
     creationResult = CreateProcessA
