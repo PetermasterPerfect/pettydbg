@@ -1,4 +1,5 @@
 #include <windows.h>
+#include <tlhelp32.h>
 #include <cstdio>
 #include <thread>
 #include <sstream>
@@ -22,6 +23,7 @@ public:
 private:
 	DEBUG_EVENT debugEvent;
 	PROCESS_INFORMATION procInfo;
+	DWORD processId;
 	HANDLE hProcess;
 	bool isAttached;
 	bool isRunning;
@@ -30,12 +32,14 @@ private:
 	void continueCommand();
 	void runCommand();
 	void breakSignal();
+	void enumerateThreadsCommand();
 	
 	template<class... Args> void debuggerMessage(Args ...);
 	template <typename T> std::string asHex(T);
 	
 	void handleCmd();
 	void exceptionSwitchedCased();
+	
 	void exceptionEvent();
 	void createThreadEvent();
 	void createProcessEvent();
@@ -45,4 +49,5 @@ private:
 	void unloadDllEvent();
 	void outputDebugStringEvent();
 	void ripEvent();
+	
 };

@@ -43,6 +43,7 @@ Debugger::Debugger(DWORD pid) : CommandLineInput("Running")
 	}
 
 	printf("Attaching to process with id %l\n", pid);
+	processId = pid;
 	isRunning = true;
 	SetConsoleCtrlHandler(registerSignals, TRUE);
 }
@@ -86,6 +87,8 @@ void Debugger::handleCmd()
 		}
 		else if(arguments[0] == "c")
 			continueCommand();
+		else if(arguments[0] == "thinfo")
+			enumerateThreadsCommand();
 		else
 			debuggerMessage("Command isnt recognized");
 		arguments.clear();
@@ -200,6 +203,7 @@ void Debugger::exceptionSwitchedCased()
 void Debugger::continueCommand()
 {
 	status = "Running";
+	debuggerMessage("c command ", debugEvent.dwThreadId);
 	ContinueDebugEvent(debugEvent.dwProcessId, debugEvent.dwThreadId, DBG_CONTINUE);
 	isRunning = true;
 }
@@ -217,6 +221,29 @@ void Debugger::breakSignal()
 		return;
 	status = "Break";
 	isRunning = false;
+}
+
+void Debugger::enumerateThreadsCommand()
+{
+	THREADENTRY32 threadInfo;
+	HANDLE hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, processId);
+	if(hSnapshot == INVALID_HANDLE_VALUE)
+	{
+		debuggerMessage("CreateToolhelp32Snapshot failed ", asHex(GetLastError()));
+		return;
+	}
+	threadInfo.dwSize = sizeof(THREADENTRY32);
+	if(!Thread32First(hSnapshot, &threadInfo))
+	{
+		debuggerMessage("Thread32First failed ", asHex(GetLastError()));
+		return;
+	}
+	do
+	{
+		if(threadInfo.th32OwnerProcessID == processId)
+			debuggerMessage("Thread with id ", threadInfo.th32ThreadID);
+		
+	}while(Thread32Next(hSnapshot, &threadInfo));
 }
 
 void Debugger::exceptionEvent()
@@ -304,5 +331,6 @@ HANDLE Debugger::startup(const char *cmdLine)
         &procInfo           // Pointer to PROCESS_INFORMATION structure
         );
 	printf("creationResult %i\n", creationResult);
+	processId = procInfo.dwProcessId;
     return procInfo.hProcess;
 }
