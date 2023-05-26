@@ -3,17 +3,23 @@ extern Debugger *dbg;
 
 BOOL WINAPI registerSignals(DWORD dwCtrlType)
 {
-		if(dwCtrlType == CTRL_C_EVENT)
+	if(dwCtrlType == CTRL_C_EVENT)
+		goto KILL;
+	else if (dwCtrlType == CTRL_BREAK_EVENT)
+	{
+		if(dbg->isRunning)
 		{
-			DebugActiveProcessStop(dbg->procInfo.dwProcessId);
-			ExitProcess(0xcc);
+			dbg->breakSignal();
+			goto RET;
 		}
-		else if (dwCtrlType == CTRL_BREAK_EVENT)
-		{
-			if(dbg->isRunning)
-				dbg->breakSignal();
-		}
-		return TRUE;
+		else
+			goto KILL;
+	}
+KILL:
+	DebugActiveProcessStop(dbg->procInfo.dwProcessId);
+	ExitProcess(0xcc);
+RET:
+	return TRUE;
 }
 
 Debugger::Debugger(const char *filePath) : CommandLineInput("Not running yet")  // filePath arg is basically cmd run by CreateProcess
@@ -70,6 +76,7 @@ void Debugger::enterDebuggerLoop()
 	memset(&debugEvent, 0, sizeof(DEBUG_EVENT));
 	while(true)
 	{
+		debuggerMessage("isRunning ", isRunning);
 		if(isRunning == false)
 		{
 			commandLineInterface();

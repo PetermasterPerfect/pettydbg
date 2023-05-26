@@ -15,7 +15,7 @@ void CommandLineInput::commandLineInterface()
 {
 	std::string cmd;
     printCommandPrompt();
-    std::getline(std::cin, cmd);
+	std::getline(std::cin, cmd);
 	trim(cmd);
 	splitstring extraCmd(cmd.c_str());
 	extraCmd.split(' ', 0, arguments);
