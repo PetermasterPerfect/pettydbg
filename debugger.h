@@ -27,6 +27,7 @@ private:
 	HANDLE hProcess;
 	bool isAttached;
 	bool isRunning;
+	bool firstBreakpoint; // inspiration from TitanEngine
 	HANDLE startup(const char*);
 	
 	void continueCommand();

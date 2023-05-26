@@ -10,7 +10,7 @@ BOOL WINAPI registerSignals(DWORD dwCtrlType)
 		}
 		else if (dwCtrlType == CTRL_BREAK_EVENT)
 		{
-			if(dbg->status!="Break")
+			if(dbg->isRunning)
 				dbg->breakSignal();
 		}
 		return TRUE;
@@ -24,7 +24,9 @@ Debugger::Debugger(const char *filePath) : CommandLineInput("Not running yet")  
 
 	printf("Running %s with id %i\n", filePath, GetProcessId(hProcess));
 	isRunning = false;
+	firstBreakpoint = true;
 	SetConsoleCtrlHandler(registerSignals, TRUE);
+	DebugSetProcessKillOnExit(TRUE);
 }
 
 Debugger::Debugger(DWORD pid) : CommandLineInput("Running")
@@ -45,7 +47,9 @@ Debugger::Debugger(DWORD pid) : CommandLineInput("Running")
 	printf("Attaching to process with id %l\n", pid);
 	processId = pid;
 	isRunning = true;
+	firstBreakpoint = false;
 	SetConsoleCtrlHandler(registerSignals, TRUE);
+	DebugSetProcessKillOnExit(TRUE);
 }
 
 template<class... Args> void Debugger::debuggerMessage(Args... args)
@@ -72,7 +76,8 @@ void Debugger::enterDebuggerLoop()
 			if(cmdToHandle == true)
 				handleCmd();		
 		}		
-		WaitForDebugEvent(&debugEvent, 1);
+		if(!WaitForDebugEvent(&debugEvent, 10))
+			continue;
 		exceptionSwitchedCased();
 	}
 }
@@ -82,9 +87,7 @@ void Debugger::handleCmd()
 	if(cmdToHandle && arguments.size() >= 1)
 	{
 		if(arguments[0] == "run")
-		{
 			runCommand();
-		}
 		else if(arguments[0] == "c")
 			continueCommand();
 		else if(arguments[0] == "thinfo")
@@ -103,29 +106,29 @@ void Debugger::exceptionSwitchedCased()
 	
 	switch(debugEvent.dwDebugEventCode)
 	{
-		
+		//TODO: first chance exception
 		case EXCEPTION_DEBUG_EVENT:
 		{
 			exceptionEvent();
 			EXCEPTION_DEBUG_INFO& exception = debugEvent.u.Exception;
 			switch( exception.ExceptionRecord.ExceptionCode)
 			{
-			case EXCEPTION_BREAKPOINT:
-				debuggerMessage("breakpoint, thread id ", debugEvent.dwThreadId);
-				break;
-
-			default:
-				if(exception.dwFirstChance == 1)
+				case STATUS_BREAKPOINT:
 				{
-					debuggerMessage("first chance");
-				}		
-			}
-			if(exception.dwFirstChance == 1)
-			{
-				debuggerMessage("first chance");
-				//ContinueDebugEvent(debugEvent.dwProcessId, 
-				//		debugEvent.dwThreadId,
-				//		DBG_CONTINUE);
+					if(firstBreakpoint)
+					{
+						firstBreakpoint = false;
+						if(!ContinueDebugEvent(debugEvent.dwProcessId, 
+						debugEvent.dwThreadId, DBG_CONTINUE))
+							debuggerMessage("ContinueDebugEvent failed ", GetLastError());
+						isRunning = true;
+					}
+					break;
+				}
+				default:
+				{
+					debuggerMessage("(default)breakpoint, thread id ", debugEvent.dwThreadId);
+				}
 			}
 			break;
 		}
@@ -164,7 +167,7 @@ void Debugger::exceptionSwitchedCased()
 		
 		case LOAD_DLL_DEBUG_EVENT:
 		{
-			loadDllEvent();
+			//loadDllEvent();
 			ContinueDebugEvent(debugEvent.dwProcessId, debugEvent.dwThreadId, DBG_CONTINUE);
 			break;
 		}
@@ -203,7 +206,6 @@ void Debugger::exceptionSwitchedCased()
 void Debugger::continueCommand()
 {
 	status = "Running";
-	debuggerMessage("c command ", debugEvent.dwThreadId);
 	ContinueDebugEvent(debugEvent.dwProcessId, debugEvent.dwThreadId, DBG_CONTINUE);
 	isRunning = true;
 }
@@ -217,10 +219,7 @@ void Debugger::runCommand()
 
 void Debugger::breakSignal()
 {
-	if(!DebugBreakProcess(hProcess))
-		return;
-	status = "Break";
-	isRunning = false;
+	DebugBreakProcess(hProcess);
 }
 
 void Debugger::enumerateThreadsCommand()
@@ -249,15 +248,12 @@ void Debugger::enumerateThreadsCommand()
 void Debugger::exceptionEvent()
 {
 	EXCEPTION_RECORD *expceptionRecord = &debugEvent.u.Exception.ExceptionRecord;
-	debuggerMessage("exceptionEvent");
 	isRunning = false;
 	status = "Break";
-	debuggerMessage("Exceptions code ", 
+	debuggerMessage("Exceptions code - ", 
 		asHex(expceptionRecord->ExceptionCode),
 		" at address ", 
 		expceptionRecord->ExceptionAddress);
-	
-	
 }
 void Debugger::createThreadEvent()
 {
