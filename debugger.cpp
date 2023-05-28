@@ -7,7 +7,7 @@ BOOL WINAPI registerSignals(DWORD dwCtrlType)
 		goto KILL;
 	else if (dwCtrlType == CTRL_BREAK_EVENT)
 	{
-		if(dbg->isRunning)
+		if(dbg->state == running)
 		{
 			dbg->breakSignal();
 			goto RET;
@@ -22,20 +22,20 @@ RET:
 	return TRUE;
 }
 
-Debugger::Debugger(const char *filePath) : CommandLineInput("Not running yet")  // filePath arg is basically cmd run by CreateProcess
+Debugger::Debugger(const char *filePath)
 {
 	hProcess = startup(filePath);
 	if(hProcess == NULL)
 		fprintf(stderr, "startup failed [%lx]\n", GetLastError());
 
 	printf("Running %s with id %i\n", filePath, GetProcessId(hProcess));
-	isRunning = false;
 	firstBreakpoint = true;
+	state = not_running;
 	SetConsoleCtrlHandler(registerSignals, TRUE);
 	DebugSetProcessKillOnExit(TRUE);
 }
 
-Debugger::Debugger(DWORD pid) : CommandLineInput("Running")
+Debugger::Debugger(DWORD pid)
 {
 	hProcess = OpenProcess(PROCESS_ALL_ACCESS, FALSE, pid);
 	if(hProcess == NULL)
@@ -52,8 +52,8 @@ Debugger::Debugger(DWORD pid) : CommandLineInput("Running")
 
 	printf("Attaching to process with id %l\n", pid);
 	processId = pid;
-	isRunning = true;
 	firstBreakpoint = false;
+	state = bpoint;
 	SetConsoleCtrlHandler(registerSignals, TRUE);
 	DebugSetProcessKillOnExit(TRUE);
 }
@@ -76,8 +76,7 @@ void Debugger::enterDebuggerLoop()
 	memset(&debugEvent, 0, sizeof(DEBUG_EVENT));
 	while(true)
 	{
-		debuggerMessage("isRunning ", isRunning);
-		if(isRunning == false)
+		if(state != running)
 		{
 			commandLineInterface();
 			if(cmdToHandle == true)
@@ -108,7 +107,7 @@ void Debugger::handleCmd()
 
 void Debugger::exceptionSwitchedCased()
 {
-	if(status == "Not running yet")
+	if(state == not_running)
 		return;
 	
 	switch(debugEvent.dwDebugEventCode)
@@ -128,7 +127,7 @@ void Debugger::exceptionSwitchedCased()
 						if(!ContinueDebugEvent(debugEvent.dwProcessId, 
 						debugEvent.dwThreadId, DBG_CONTINUE))
 							debuggerMessage("ContinueDebugEvent failed ", GetLastError());
-						isRunning = true;
+						state 	= running;
 					}
 					break;
 				}
@@ -212,16 +211,14 @@ void Debugger::exceptionSwitchedCased()
 
 void Debugger::continueCommand()
 {
-	status = "Running";
 	ContinueDebugEvent(debugEvent.dwProcessId, debugEvent.dwThreadId, DBG_CONTINUE);
-	isRunning = true;
+	state = running;
 }
 
 void Debugger::runCommand()
 {
-	status = "Running";
 	ContinueDebugEvent(procInfo.dwProcessId, procInfo.dwThreadId, DBG_CONTINUE);
-	isRunning = true;
+	state = running;
 }
 
 void Debugger::breakSignal()
@@ -255,8 +252,7 @@ void Debugger::enumerateThreadsCommand()
 void Debugger::exceptionEvent()
 {
 	EXCEPTION_RECORD *expceptionRecord = &debugEvent.u.Exception.ExceptionRecord;
-	isRunning = false;
-	status = "Break";
+	state = bpoint;
 	debuggerMessage("Exceptions code - ", 
 		asHex(expceptionRecord->ExceptionCode),
 		" at address ", 
@@ -280,7 +276,6 @@ void Debugger::exitThreadEvent()
 void Debugger::exitProcessEvent()
 {
 	debuggerMessage("Exiting process with code ", debugEvent.u.ExitProcess.dwExitCode);
-	status = "Exit";
 }
 
 void Debugger::loadDllEvent()
@@ -333,7 +328,6 @@ HANDLE Debugger::startup(const char *cmdLine)
         &si,            // Pointer to STARTUPINFO structure
         &procInfo           // Pointer to PROCESS_INFORMATION structure
         );
-	printf("creationResult %i\n", creationResult);
 	processId = procInfo.dwProcessId;
     return procInfo.hProcess;
 }

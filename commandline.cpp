@@ -1,9 +1,5 @@
 #include "commandline.h"
 
-CommandLineInput::CommandLineInput(std::string st) : cmdToHandle(false)
-{
-    status = st;
-}
 std::string CommandLineInput::trim(std::string& str) // ***
 {
     str.erase(str.find_last_not_of(' ')+1);         //suffixing spaces

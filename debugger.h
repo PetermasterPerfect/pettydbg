@@ -1,12 +1,13 @@
 #include <windows.h>
 #include <tlhelp32.h>
 #include <cstdio>
-#include <thread>
 #include <sstream>
 #include "commandline.h"
 
 // TODO: decide whether isRunning = false; should be in breakCommand oor in exceptionEvent
 // TODO: implement runCommand and continueCommand (they do the same at the moment) 
+
+enum states{not_running, running, bpoint};
 
 BOOL WINAPI registerSignals(DWORD);
 
@@ -25,6 +26,7 @@ private:
 	PROCESS_INFORMATION procInfo;
 	DWORD processId;
 	HANDLE hProcess;
+	states state;
 	bool isAttached;
 	bool isRunning;
 	bool firstBreakpoint; // inspiration from TitanEngine
