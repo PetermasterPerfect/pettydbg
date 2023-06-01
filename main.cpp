@@ -5,7 +5,9 @@ Debugger *dbg;
 // x86_64-w64-mingw32-g++ main.cpp debugger.cpp commandline.cpp splitstring.cpp -o dbg.exe -static -std=c++17
 int main(int argc, char** argv)
 {
-	dbg = new Debugger("test.exe");
+	wchar_t *cmd = new wchar_t[0x20];
+	wcscpy (cmd, L"test.exe");
+	dbg = new Debugger(cmd);
 	dbg->enterDebuggerLoop();
 /*	
 	if(argc < 2)

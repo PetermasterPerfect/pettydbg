@@ -22,13 +22,13 @@ RET:
 	return TRUE;
 }
 
-Debugger::Debugger(const char *filePath)
+Debugger::Debugger(wchar_t *cmd)
 {
-	hProcess = startup(filePath);
+	hProcess = startup(cmd);
 	if(hProcess == NULL)
 		fprintf(stderr, "startup failed [%lx]\n", GetLastError());
 
-	printf("Running %s with id %i\n", filePath, GetProcessId(hProcess));
+	printf("Running %s with id %i\n", cmd, GetProcessId(hProcess));
 	firstBreakpoint = true;
 	state = not_running;
 	SetConsoleCtrlHandler(registerSignals, TRUE);
@@ -99,10 +99,8 @@ void Debugger::handleCmd() // TODO: almost everything in this fucntion
 			continueCommand();
 		else if(arguments[0] == "thinfo")
 			enumerateThreadsCommand();
-		else if(arguments[0] == "get")
-			getNtQueryInformationProcess();
-		else if(arguments[0] == "peb")
-			pebtest();
+		else if(arguments[0] == "cmd")
+			cmdtest();
 		else
 			debuggerMessage("Command isnt recognized");
 		arguments.clear();
@@ -222,8 +220,48 @@ void Debugger::continueCommand()
 
 void Debugger::runCommand()
 {
-	ContinueDebugEvent(procInfo.dwProcessId, procInfo.dwThreadId, DBG_CONTINUE);
-	state = running;
+	if(state == not_running)
+	{
+		ContinueDebugEvent(debugEvent.dwProcessId, debugEvent.dwThreadId, DBG_CONTINUE);
+		state = running;
+	}
+	else
+	{
+		wchar_t cwdBuf[0x300];
+		PRTL_USER_PROCESS_PARAMETERS procParams = loadProcessParameters();
+		if(procParams == nullptr)
+			return;
+
+		UnicodeStringEx cmd(hProcess, &procParams->CommandLine);
+		UnicodeStringEx cwd(hProcess, &procParams->CurrentDirectoryPath);
+
+		if(!GetCurrentDirectoryW(0x300, cwdBuf))
+		{
+			debuggerMessage("GetCurrentDirectoryW failed ", GetLastError());
+			return;
+		}
+
+		if(!SetCurrentDirectoryW(cwd.actualString.Buffer))
+		{
+			debuggerMessage("SetCurrentDirectoryW1 failed ", GetLastError());
+			return;		
+		}
+
+		TerminateProcess(hProcess, 33);
+		WaitForSingleObject(hProcess, 10);
+		//cmd.actualString.Buffer = (PWSTR)((size_t)cmd.actualString.Buffer+2);
+		//printf("last: %ls\n", cmd.actualString.Buffer[cmd.actualString.Length-1]);
+		hProcess = startup(cmd.actualString.Buffer);
+		state = not_running;
+		firstBreakpoint = true;
+
+		if(!SetCurrentDirectoryW(cwdBuf))
+		{
+			debuggerMessage("SetCurrentDirectoryW2 failed ", GetLastError());
+			return;		
+		}
+
+	}
 }
 
 void Debugger::breakSignal()
@@ -258,7 +296,7 @@ void Debugger::exceptionEvent()
 {
 	EXCEPTION_RECORD *expceptionRecord = &debugEvent.u.Exception.ExceptionRecord;
 	state = bpoint;
-	debuggerMessage("Exceptions code - ", 
+	debuggerMessage("Exception ", 
 		asHex(expceptionRecord->ExceptionCode),
 		" at address ", 
 		expceptionRecord->ExceptionAddress);
@@ -306,9 +344,9 @@ void Debugger::ripEvent()
 	debuggerMessage("RIP error number ", debugEvent.u.RipInfo.dwError);
 }
 
-HANDLE Debugger::startup(const char *cmdLine)
+HANDLE Debugger::startup(const wchar_t *cmdLine)
 {
-    STARTUPINFOA si;
+    STARTUPINFOW si;
     bool creationResult;
 
     ZeroMemory(&si, sizeof(si));
@@ -320,10 +358,10 @@ HANDLE Debugger::startup(const char *cmdLine)
 	D_INPUT_HANDLE);
 	si.hStdError = GetStdHandle(STD_ERROR_HANDLE);
 	si.dwFlags |= STARTF_USESTDHANDLES;*/
-    creationResult = CreateProcessA
+    creationResult = CreateProcessW
     (
-        (char*)cmdLine,   // the path
-        NULL,                // Command line
+        NULL,   // the path
+		(LPWSTR)cmdLine,                // Command line
         NULL,                   // Process handle not inheritable
         NULL,                   // Thread handle not inheritable
         FALSE,                  // Set handle inheritance to FALSE
@@ -333,6 +371,9 @@ HANDLE Debugger::startup(const char *cmdLine)
         &si,            // Pointer to STARTUPINFO structure
         &procInfo           // Pointer to PROCESS_INFORMATION structure
         );
+    if(!creationResult)
+    	debuggerMessage("CreateProcessW failed ", GetLastError());
+
 	processId = procInfo.dwProcessId;
     return procInfo.hProcess;
 }
@@ -344,7 +385,6 @@ NtQueryInformationProcess Debugger::getNtQueryInformationProcess()
 		return nullptr;
 
 	NtQueryInformationProcess func = (NtQueryInformationProcess)GetProcAddress(hNtdll, "NtQueryInformationProcess");
-	printf("nt: %p\n", func);
 	return func;
 }
 
@@ -374,18 +414,45 @@ PPEB Debugger::loadPeb() // loads peb data from debugged process to allocated(he
 
 	if(!ReadProcessMemory(hProcess, procInfo.PebBaseAddress, peb, sizeof(PEB), NULL))
 	{
-		debuggerMessage("ReadProcessMemory failed ", GetLastError());
+		debuggerMessage("loadPeb ReadProcessMemory failed ", GetLastError());
 		return nullptr;
 	}
 	return peb;
 }
 
-void Debugger::pebtest()
+PRTL_USER_PROCESS_PARAMETERS Debugger::loadProcessParameters()
 {
+	PRTL_USER_PROCESS_PARAMETERS procParams;
+	PPEB peb = loadPeb();
+	if(peb == nullptr)
+		return nullptr;
+
+	procParams = new RTL_USER_PROCESS_PARAMETERS;
+	if(!ReadProcessMemory(hProcess, peb->ProcessParameters, procParams, sizeof(RTL_USER_PROCESS_PARAMETERS), NULL))
+	{
+		debuggerMessage("loadProcessParameters ReadProcessMemory failed ", GetLastError());
+		delete peb;
+		return nullptr;
+	}
+
+	delete peb;
+	return procParams;
+}
+
+void Debugger::cmdtest()
+{
+	RTL_USER_PROCESS_PARAMETERS procParams;
 	PPEB peb = loadPeb();
 	if(peb == nullptr)
 		return;
-	debuggerMessage("BeingDebugged: ", (int)peb->BeingDebugged);
-	debuggerMessage("ImageBaseAddress: ", peb->ImageBaseAddress);
-	debuggerMessage("ProcessHeap: ", peb->ProcessHeap);
+
+	if(!ReadProcessMemory(hProcess, peb->ProcessParameters, &procParams, sizeof(RTL_USER_PROCESS_PARAMETERS), NULL))
+	{
+		debuggerMessage("ReadProcessMemory failed ", GetLastError());
+		return;
+	}
+
+	UnicodeStringEx cmd(hProcess, &procParams.CommandLine);
 }
+
+

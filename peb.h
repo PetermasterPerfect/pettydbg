@@ -1,16 +1,16 @@
 #pragma once
 #include <windows.h>
-
+#include <subauth.h>
 enum PROCESSINFOCLASS {ProcessBasicInformation = 0};
 
 typedef NTSTATUS(*NtQueryInformationProcess)(HANDLE, PROCESSINFOCLASS, PVOID, ULONG, PULONG);
 
-typedef struct _UNICODE_STRING {
+/*typedef struct _UNICODE_STRING {
 	USHORT Length;
 	USHORT MaximumLength;
 	PWSTR  Buffer;
 } UNICODE_STRING, * PUNICODE_STRING;
-
+*/
 typedef struct _RTL_DRIVE_LETTER_CURDIR {
 	USHORT                  Flags;
 	USHORT                  Length;
