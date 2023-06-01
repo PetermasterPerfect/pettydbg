@@ -6,12 +6,6 @@
 #include "peb.h"
 #include "unicodeStringEx.h"
 
-// STATUS_SUCESS is equal 0x0
-//#define NT_SUCCESS(s) (s == 0 ? 1 : 0)
-
-// TODO: decide whether isRunning = false; should be in breakCommand oor in exceptionEvent
-// TODO: implement runCommand and continueCommand (they do the same at the moment) 
-
 enum states{not_running, running, bpoint};
 
 BOOL WINAPI registerSignals(DWORD);
