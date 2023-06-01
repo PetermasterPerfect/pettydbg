@@ -3,6 +3,10 @@
 #include <cstdio>
 #include <sstream>
 #include "commandline.h"
+#include "peb.h"
+
+// STATUS_SUCESS is equal 0x0
+#define NT_SUCCESS(s) (s == 0 ? 1 : 0)
 
 // TODO: decide whether isRunning = false; should be in breakCommand oor in exceptionEvent
 // TODO: implement runCommand and continueCommand (they do the same at the moment) 
@@ -53,4 +57,7 @@ private:
 	void outputDebugStringEvent();
 	void ripEvent();
 	
+	NtQueryInformationProcess getNtQueryInformationProcess();
+	PPEB loadPeb();
+	void pebtest();
 };

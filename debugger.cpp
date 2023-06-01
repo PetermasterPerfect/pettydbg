@@ -88,7 +88,8 @@ void Debugger::enterDebuggerLoop()
 	}
 }
 
-void Debugger::handleCmd()
+
+void Debugger::handleCmd() // TODO: almost everything in this fucntion
 {
 	if(cmdToHandle && arguments.size() >= 1)
 	{
@@ -98,6 +99,10 @@ void Debugger::handleCmd()
 			continueCommand();
 		else if(arguments[0] == "thinfo")
 			enumerateThreadsCommand();
+		else if(arguments[0] == "get")
+			getNtQueryInformationProcess();
+		else if(arguments[0] == "peb")
+			pebtest();
 		else
 			debuggerMessage("Command isnt recognized");
 		arguments.clear();
@@ -330,4 +335,57 @@ HANDLE Debugger::startup(const char *cmdLine)
         );
 	processId = procInfo.dwProcessId;
     return procInfo.hProcess;
+}
+
+NtQueryInformationProcess Debugger::getNtQueryInformationProcess()
+{
+	HMODULE hNtdll = GetModuleHandle("ntdll");
+	if(hNtdll == NULL)
+		return nullptr;
+
+	NtQueryInformationProcess func = (NtQueryInformationProcess)GetProcAddress(hNtdll, "NtQueryInformationProcess");
+	printf("nt: %p\n", func);
+	return func;
+}
+
+PPEB Debugger::loadPeb() // loads peb data from debugged process to allocated(heap) buffer so later that memory should be realeased
+{
+	NTSTATUS status;
+	PROCESS_BASIC_INFORMATION procInfo;
+	ULONG ret;
+	NtQueryInformationProcess queryInfoProc = getNtQueryInformationProcess();
+	PPEB peb;
+	if(queryInfoProc == nullptr)
+		return nullptr;
+
+	status = queryInfoProc(hProcess, ProcessBasicInformation, &procInfo, sizeof(PROCESS_BASIC_INFORMATION), &ret);
+	if(!NT_SUCCESS(status))
+	{
+		debuggerMessage("NtQueryInformationProcess failed ", GetLastError());
+		return nullptr;
+	}
+
+	peb = new PEB;
+	if(peb == nullptr)
+	{
+		debuggerMessage("failed to allocate memory for peb");
+		return nullptr;
+	}
+
+	if(!ReadProcessMemory(hProcess, procInfo.PebBaseAddress, peb, sizeof(PEB), NULL))
+	{
+		debuggerMessage("ReadProcessMemory failed ", GetLastError());
+		return nullptr;
+	}
+	return peb;
+}
+
+void Debugger::pebtest()
+{
+	PPEB peb = loadPeb();
+	if(peb == nullptr)
+		return;
+	debuggerMessage("BeingDebugged: ", (int)peb->BeingDebugged);
+	debuggerMessage("ImageBaseAddress: ", peb->ImageBaseAddress);
+	debuggerMessage("ProcessHeap: ", peb->ProcessHeap);
 }
