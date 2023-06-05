@@ -235,32 +235,12 @@ void Debugger::runCommand()
 		UnicodeStringEx cmd(hProcess, &procParams->CommandLine);
 		UnicodeStringEx cwd(hProcess, &procParams->CurrentDirectoryPath);
 
-		if(!GetCurrentDirectoryW(0x300, cwdBuf))
-		{
-			debuggerMessage("GetCurrentDirectoryW failed ", GetLastError());
-			return;
-		}
-
-		if(!SetCurrentDirectoryW(cwd.actualString.Buffer))
-		{
-			debuggerMessage("SetCurrentDirectoryW1 failed ", GetLastError());
-			return;		
-		}
-
 		TerminateProcess(hProcess, 33);
-		WaitForSingleObject(hProcess, 10);
-		//cmd.actualString.Buffer = (PWSTR)((size_t)cmd.actualString.Buffer+2);
-		//printf("last: %ls\n", cmd.actualString.Buffer[cmd.actualString.Length-1]);
+		WaitForSingleObject(hProcess, 100);
+
 		hProcess = startup(cmd.actualString.Buffer);
 		state = not_running;
 		firstBreakpoint = true;
-
-		if(!SetCurrentDirectoryW(cwdBuf))
-		{
-			debuggerMessage("SetCurrentDirectoryW2 failed ", GetLastError());
-			return;		
-		}
-
 	}
 }
 
@@ -353,6 +333,7 @@ HANDLE Debugger::startup(const wchar_t *cmdLine)
     si.cb = sizeof(si);
     ZeroMemory(&procInfo, sizeof(PROCESS_INFORMATION));
 
+    printf("cmd: %ls\n", cmdLine);
 /*	si.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE);
 	si.hStdInput = GetStdHandle(ST
 	D_INPUT_HANDLE);
