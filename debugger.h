@@ -61,4 +61,5 @@ private:
 	PPEB_LDR_DATA loadLoaderData();
 	std::map<PVOID, std::string> sketchMemory();
 	void cmdtest();
+	void sketchMemoryTest();
 };

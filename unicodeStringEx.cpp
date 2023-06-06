@@ -24,7 +24,10 @@ UnicodeStringEx::UnicodeStringEx(HANDLE h, PUNICODE_STRING buf)
 
 std::string UnicodeStringEx::toString()
 {
-	std::wstring buf(actualString.Buffer);
+	char *s = new char[actualString.Length+2];
+	memmove(s, actualString.Buffer, actualString.Length);
+	*(short*)(&s[actualString.Length]) = 0;
+	std::wstring buf((wchar_t*)s);
 	std::string ret(buf.begin(), buf.end());
 	return ret;
 }

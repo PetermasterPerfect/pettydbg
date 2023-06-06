@@ -28,7 +28,7 @@ Debugger::Debugger(wchar_t *cmd)
 	if(hProcess == NULL)
 		fprintf(stderr, "startup failed [%lx]\n", GetLastError());
 
-	printf("Running %s with id %i\n", cmd, GetProcessId(hProcess));
+	printf("Running %ls with id %i\n", cmd, GetProcessId(hProcess));
 	firstBreakpoint = true;
 	state = not_running;
 	SetConsoleCtrlHandler(registerSignals, TRUE);
@@ -98,7 +98,9 @@ void Debugger::handleCmd() // TODO: almost everything in this fucntion
 		else if(arguments[0] == "c")
 			continueCommand();
 		else if(arguments[0] == "thinfo")
-			enumerateThreadsCommand();
+			enumerateThreadsCommand();		
+		else if(arguments[0] == "mem")
+			sketchMemoryTest();
 		else
 			debuggerMessage("Command isnt recognized");
 		arguments.clear();
@@ -290,37 +292,54 @@ void Debugger::enumerateMemoryPagesCommand()
 
 std::map<PVOID, std::string> Debugger::sketchMemory()
 {
+	LIST_ENTRY buf, end;
 	std::map<PVOID, std::string> memorySketch;
 	PPEB peb = loadPeb();
 	PPEB_LDR_DATA loaderData = loadLoaderData();
 	if(loaderData == nullptr)
 		return memorySketch;
 
-	memorySketch[peb->ImageBaseAddress]  = "Image Base";
-	LIST_ENTRY buf = loaderData->InLoadOrderModuleList;
+	memorySketch[peb->ImageBaseAddress]  = "Image base ";
+	buf = loaderData->InLoadOrderModuleList;
+	if(!ReadProcessMemory(hProcess, loaderData->InLoadOrderModuleList.Flink, &end, sizeof(LIST_ENTRY), NULL))
+	{
+		debuggerMessage("LIST_ENTRY1 ReadProcessMemory failed ", GetLastError());
+		goto EXIT;
+	}
+
 	do
 	{
 		LDR_MODULE moduleInfo;
-		PVOID moduleInfoAddress = CONTAINING_RECORD(&buf, LDR_MODULE, InLoadOrderModuleList);
+		PVOID moduleInfoAddress = CONTAINING_RECORD(buf.Flink, LDR_MODULE, InLoadOrderModuleList);
 		if(!ReadProcessMemory(hProcess, moduleInfoAddress, &moduleInfo, sizeof(LDR_MODULE), NULL))
 		{
 			debuggerMessage("LDR_MODULE ReadProcessMemory failed ", GetLastError());
 			goto EXIT;
 		}
-
 		UnicodeStringEx baseModuleName(hProcess, &moduleInfo.BaseDllName);
+
+		if(moduleInfo.BaseAddress == peb->ImageBaseAddress) 
+			memorySketch[moduleInfo.BaseAddress] += baseModuleName.toString();
+		else
+			memorySketch[moduleInfo.BaseAddress] = baseModuleName.toString();
 
 		if(!ReadProcessMemory(hProcess, buf.Flink, &buf, sizeof(LIST_ENTRY), NULL))
 		{
-			debuggerMessage("LIST_ENTRY ReadProcessMemory failed ", GetLastError());
+			debuggerMessage("LIST_ENTRY2 ReadProcessMemory failed ", GetLastError());
 			goto EXIT;
 		}
-
-	}while(buf.Flink!=loaderData->InLoadOrderModuleList.Flink);
+	}while(buf.Flink!=end.Blink);
 
 EXIT:
 	delete loaderData;
 	return memorySketch;
+}
+
+void Debugger::sketchMemoryTest()
+{
+	std::map<PVOID, std::string> mem = sketchMemory();
+	for(auto i : mem)
+		debuggerMessage(i.first, " - ", i.second);
 }
 
 void Debugger::exceptionEvent()
@@ -384,12 +403,6 @@ HANDLE Debugger::startup(const wchar_t *cmdLine)
     si.cb = sizeof(si);
     ZeroMemory(&procInfo, sizeof(PROCESS_INFORMATION));
 
-    printf("cmd: %ls\n", cmdLine);
-/*	si.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE);
-	si.hStdInput = GetStdHandle(ST
-	D_INPUT_HANDLE);
-	si.hStdError = GetStdHandle(STD_ERROR_HANDLE);
-	si.dwFlags |= STARTF_USESTDHANDLES;*/
     creationResult = CreateProcessW
     (
         NULL,   // the path
