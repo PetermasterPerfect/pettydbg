@@ -10,4 +10,5 @@ public:
 	~UnicodeStringEx();
 	UnicodeStringEx(HANDLE, PUNICODE_STRING);
 	UNICODE_STRING actualString;
+	std::string toString();
 };

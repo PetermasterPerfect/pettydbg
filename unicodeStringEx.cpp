@@ -21,3 +21,10 @@ UnicodeStringEx::UnicodeStringEx(HANDLE h, PUNICODE_STRING buf)
 	actualString.MaximumLength = buf->MaximumLength;
 	actualString.Buffer = strBuf;
 }
+
+std::string UnicodeStringEx::toString()
+{
+	std::wstring buf(actualString.Buffer);
+	std::string ret(buf.begin(), buf.end());
+	return ret;
+}

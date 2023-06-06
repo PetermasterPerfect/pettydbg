@@ -2,6 +2,7 @@
 #include <tlhelp32.h>
 #include <cstdio>
 #include <sstream>
+#include <map>
 #include "commandline.h"
 #include "peb.h"
 #include "unicodeStringEx.h"
@@ -36,6 +37,7 @@ private:
 	void runCommand();
 	void breakSignal();
 	void enumerateThreadsCommand();
+	void enumerateMemoryPagesCommand();
 	
 	template<class... Args> void debuggerMessage(Args ...);
 	template <typename T> std::string asHex(T);
@@ -56,5 +58,7 @@ private:
 	NtQueryInformationProcess getNtQueryInformationProcess();
 	PPEB loadPeb();
 	PRTL_USER_PROCESS_PARAMETERS loadProcessParameters();
+	PPEB_LDR_DATA loadLoaderData();
+	std::map<PVOID, std::string> sketchMemory();
 	void cmdtest();
 };

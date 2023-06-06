@@ -99,8 +99,6 @@ void Debugger::handleCmd() // TODO: almost everything in this fucntion
 			continueCommand();
 		else if(arguments[0] == "thinfo")
 			enumerateThreadsCommand();
-		else if(arguments[0] == "cmd")
-			cmdtest();
 		else
 			debuggerMessage("Command isnt recognized");
 		arguments.clear();
@@ -218,6 +216,8 @@ void Debugger::continueCommand()
 	state = running;
 }
 
+
+//TODO: implement changing directory when restarting
 void Debugger::runCommand()
 {
 	if(state == not_running)
@@ -241,6 +241,7 @@ void Debugger::runCommand()
 		hProcess = startup(cmd.actualString.Buffer);
 		state = not_running;
 		firstBreakpoint = true;
+		delete procParams;
 	}
 }
 
@@ -270,6 +271,56 @@ void Debugger::enumerateThreadsCommand()
 			debuggerMessage("Thread with id ", threadInfo.th32ThreadID);
 		
 	}while(Thread32Next(hSnapshot, &threadInfo));
+}
+
+
+void Debugger::enumerateMemoryPagesCommand()
+{
+	SIZE_T startAddr = 0;
+	MEMORY_BASIC_INFORMATION memInfo;
+	memset(&memInfo, 0, sizeof(MEMORY_BASIC_INFORMATION));
+	std::map<PVOID, std::string> addressesDescription = sketchMemory();
+
+	while (VirtualQueryEx(hProcess, (LPCVOID)startAddr, &memInfo, sizeof(MEMORY_BASIC_INFORMATION)))
+	{
+
+		startAddr += memInfo.RegionSize;
+	}
+}
+
+std::map<PVOID, std::string> Debugger::sketchMemory()
+{
+	std::map<PVOID, std::string> memorySketch;
+	PPEB peb = loadPeb();
+	PPEB_LDR_DATA loaderData = loadLoaderData();
+	if(loaderData == nullptr)
+		return memorySketch;
+
+	memorySketch[peb->ImageBaseAddress]  = "Image Base";
+	LIST_ENTRY buf = loaderData->InLoadOrderModuleList;
+	do
+	{
+		LDR_MODULE moduleInfo;
+		PVOID moduleInfoAddress = CONTAINING_RECORD(&buf, LDR_MODULE, InLoadOrderModuleList);
+		if(!ReadProcessMemory(hProcess, moduleInfoAddress, &moduleInfo, sizeof(LDR_MODULE), NULL))
+		{
+			debuggerMessage("LDR_MODULE ReadProcessMemory failed ", GetLastError());
+			goto EXIT;
+		}
+
+		UnicodeStringEx baseModuleName(hProcess, &moduleInfo.BaseDllName);
+
+		if(!ReadProcessMemory(hProcess, buf.Flink, &buf, sizeof(LIST_ENTRY), NULL))
+		{
+			debuggerMessage("LIST_ENTRY ReadProcessMemory failed ", GetLastError());
+			goto EXIT;
+		}
+
+	}while(buf.Flink!=loaderData->InLoadOrderModuleList.Flink);
+
+EXIT:
+	delete loaderData;
+	return memorySketch;
 }
 
 void Debugger::exceptionEvent()
@@ -420,20 +471,21 @@ PRTL_USER_PROCESS_PARAMETERS Debugger::loadProcessParameters()
 	return procParams;
 }
 
-void Debugger::cmdtest()
+PPEB_LDR_DATA Debugger::loadLoaderData()
 {
-	RTL_USER_PROCESS_PARAMETERS procParams;
+	PPEB_LDR_DATA loaderData;
 	PPEB peb = loadPeb();
 	if(peb == nullptr)
-		return;
+		return nullptr;
 
-	if(!ReadProcessMemory(hProcess, peb->ProcessParameters, &procParams, sizeof(RTL_USER_PROCESS_PARAMETERS), NULL))
+	loaderData = new PEB_LDR_DATA;
+	if(!ReadProcessMemory(hProcess, peb->LoaderData, loaderData, sizeof(PEB_LDR_DATA), NULL))
 	{
-		debuggerMessage("ReadProcessMemory failed ", GetLastError());
-		return;
+		debuggerMessage("loadLoaderData ReadProcessMemory failed ", GetLastError());
+		delete peb;
+		return nullptr;
 	}
 
-	UnicodeStringEx cmd(hProcess, &procParams.CommandLine);
+	delete peb;
+	return loaderData;
 }
-
-
