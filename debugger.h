@@ -6,6 +6,7 @@
 #include "commandline.h"
 #include "peb.h"
 #include "unicodeStringEx.h"
+#include "thread_info.h"
 
 enum states{not_running, running, bpoint};
 
@@ -56,10 +57,12 @@ private:
 	void ripEvent();
 	
 	NtQueryInformationProcess getNtQueryInformationProcess();
+	NtQueryInformationThread getNtQueryInformationThread();
 	PPEB loadPeb();
 	PRTL_USER_PROCESS_PARAMETERS loadProcessParameters();
 	PPEB_LDR_DATA loadLoaderData();
 	std::map<PVOID, std::string> sketchMemory();
+	std::map<PVOID, std::string> sketchThreadMemory();
 	void cmdtest();
 	void sketchMemoryTest();
 };

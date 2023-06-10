@@ -292,12 +292,22 @@ void Debugger::enumerateMemoryPagesCommand()
 
 std::map<PVOID, std::string> Debugger::sketchMemory()
 {
+	PVOID *heaps;
 	LIST_ENTRY buf, end;
 	std::map<PVOID, std::string> memorySketch;
+	std::map<PVOID, std::string> threadsMem;
+
+	// obtaining addresses of loaded modules;
 	PPEB peb = loadPeb();
+	if(peb == nullptr)
+		return memorySketch;
+
 	PPEB_LDR_DATA loaderData = loadLoaderData();
 	if(loaderData == nullptr)
+	{
+		delete peb;
 		return memorySketch;
+	}
 
 	memorySketch[peb->ImageBaseAddress]  = "Image base ";
 	buf = loaderData->InLoadOrderModuleList;
@@ -330,9 +340,90 @@ std::map<PVOID, std::string> Debugger::sketchMemory()
 		}
 	}while(buf.Flink!=end.Blink);
 
+	// obtaining addresses of heaps
+
+	heaps = new PVOID[peb->NumberOfHeaps];
+	if(heaps == nullptr)
+		goto EXIT;
+
+	if (!ReadProcessMemory(hProcess, peb->ProcessHeaps, heaps, peb->NumberOfHeaps*sizeof(PVOID), NULL))
+	{
+		debuggerMessage("heap ReadProcessMemory failed ", GetLastError());
+		goto EXIT1;
+	}
+
+	for(ULONG i=0; i<peb->NumberOfHeaps; i++)
+		memorySketch[heaps[i]] = "Heap";
+
+	// obtaing threads information related pages (tebs, stacks)
+
+	threadsMem = sketchThreadMemory();
+	for(auto i : threadsMem)
+		debuggerMessage(i.first, " - ", i.second);
+	//memorySketch.insert(threadsMem.begin(), threadsMem.end());
+
+EXIT1:
+	delete heaps;
 EXIT:
 	delete loaderData;
+	delete peb;
 	return memorySketch;
+}
+
+std::map<PVOID, std::string> Debugger::sketchThreadMemory()
+{
+	debuggerMessage("sketchThreadMemory, current thread ", debugEvent.dwThreadId);
+	std::map<PVOID, std::string> threadMemorySketch;
+	THREADENTRY32 threadInfo;
+	NtQueryInformationThread queryThreadInfo = getNtQueryInformationThread();
+	if(queryThreadInfo == nullptr)
+	{
+		debuggerMessage("getNtQueryInformationThread failed ", asHex(GetLastError()));
+		return threadMemorySketch;
+	}
+
+	HANDLE hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, processId);
+	if(hSnapshot == INVALID_HANDLE_VALUE)
+	{
+		debuggerMessage("CreateToolhelp32Snapshot failed ", asHex(GetLastError()));
+		return threadMemorySketch;
+	}
+
+	threadInfo.dwSize = sizeof(THREADENTRY32);
+	if(!Thread32First(hSnapshot, &threadInfo))
+	{
+		debuggerMessage("Thread32First failed ", asHex(GetLastError()));
+		CloseHandle(hSnapshot);
+		return threadMemorySketch;
+	}
+	do
+	{
+		THREAD_BASIC_INFORMATION threadBasicInfo;
+		ULONG ret;
+		HANDLE hThread;
+		if(threadInfo.th32OwnerProcessID != processId)
+			continue;
+
+		hThread = OpenThread(THREAD_QUERY_INFORMATION,  FALSE, threadInfo.th32ThreadID);
+		if(hThread == NULL)
+		{	
+			debuggerMessage("OpenThread failed ", threadInfo.th32ThreadID, " - ",GetLastError());
+			continue;
+		}
+
+		if(!NT_SUCCESS(queryThreadInfo(hThread, ThreadBasicInformation, &threadBasicInfo, sizeof(THREAD_BASIC_INFORMATION), &ret)))
+		{
+			debuggerMessage("queryThreadInfo failed", GetLastError());
+			CloseHandle(hThread);
+			continue;
+		}
+
+		threadMemorySketch[threadBasicInfo.TebBaseAddress] = "Teb"; //TODO: add thread id to memory description;
+		CloseHandle(hThread);
+	}while(Thread32Next(hSnapshot, &threadInfo));
+
+	CloseHandle(hSnapshot);
+	return threadMemorySketch;
 }
 
 void Debugger::sketchMemoryTest()
@@ -430,6 +521,16 @@ NtQueryInformationProcess Debugger::getNtQueryInformationProcess()
 		return nullptr;
 
 	NtQueryInformationProcess func = (NtQueryInformationProcess)GetProcAddress(hNtdll, "NtQueryInformationProcess");
+	return func;
+}
+
+NtQueryInformationThread Debugger::getNtQueryInformationThread()
+{
+	HMODULE hNtdll = GetModuleHandle("ntdll");
+	if(hNtdll == NULL)
+		return nullptr;
+
+	NtQueryInformationThread func = (NtQueryInformationThread)GetProcAddress(hNtdll, "NtQueryInformationThread");
 	return func;
 }
 
