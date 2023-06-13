@@ -254,25 +254,8 @@ void Debugger::breakSignal()
 
 void Debugger::enumerateThreadsCommand()
 {
-	THREADENTRY32 threadInfo;
-	HANDLE hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, processId);
-	if(hSnapshot == INVALID_HANDLE_VALUE)
-	{
-		debuggerMessage("CreateToolhelp32Snapshot failed ", asHex(GetLastError()));
-		return;
-	}
-	threadInfo.dwSize = sizeof(THREADENTRY32);
-	if(!Thread32First(hSnapshot, &threadInfo))
-	{
-		debuggerMessage("Thread32First failed ", asHex(GetLastError()));
-		return;
-	}
-	do
-	{
-		if(threadInfo.th32OwnerProcessID == processId)
-			debuggerMessage("Thread with id ", threadInfo.th32ThreadID);
-		
-	}while(Thread32Next(hSnapshot, &threadInfo));
+	for(auto idHandle : activeThreads)
+		debuggerMessage("Thread - ", idHandle.first);
 }
 
 
@@ -374,7 +357,6 @@ std::map<PVOID, std::string> Debugger::sketchThreadMemory()
 {
 	debuggerMessage("sketchThreadMemory, current thread ", debugEvent.dwThreadId);
 	std::map<PVOID, std::string> threadMemorySketch;
-	THREADENTRY32 threadInfo;
 	NtQueryInformationThread queryThreadInfo = getNtQueryInformationThread();
 	if(queryThreadInfo == nullptr)
 	{
@@ -382,46 +364,19 @@ std::map<PVOID, std::string> Debugger::sketchThreadMemory()
 		return threadMemorySketch;
 	}
 
-	HANDLE hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, processId);
-	if(hSnapshot == INVALID_HANDLE_VALUE)
-	{
-		debuggerMessage("CreateToolhelp32Snapshot failed ", asHex(GetLastError()));
-		return threadMemorySketch;
-	}
 
-	threadInfo.dwSize = sizeof(THREADENTRY32);
-	if(!Thread32First(hSnapshot, &threadInfo))
-	{
-		debuggerMessage("Thread32First failed ", asHex(GetLastError()));
-		CloseHandle(hSnapshot);
-		return threadMemorySketch;
-	}
-	do
+	for(auto idHandle : activeThreads)
 	{
 		THREAD_BASIC_INFORMATION threadBasicInfo;
 		ULONG ret;
-		HANDLE hThread;
-		if(threadInfo.th32OwnerProcessID != processId)
-			continue;
-
-		hThread = activeThreads[threadInfo.th32ThreadID];//OpenThread(THREAD_QUERY_INFORMATION,  FALSE, threadInfo.th32ThreadID);
-		if(hThread == NULL)
-		{	
-			debuggerMessage("OpenThread failed ", threadInfo.th32ThreadID, " - ",GetLastError());
-			continue;
-		}
-		NTSTATUS status = queryThreadInfo(hThread, ThreadBasicInformation, &threadBasicInfo, sizeof(THREAD_BASIC_INFORMATION), &ret);
+		NTSTATUS status = queryThreadInfo(idHandle.second, ThreadBasicInformation, &threadBasicInfo, sizeof(THREAD_BASIC_INFORMATION), &ret);
 		if(!NT_SUCCESS(status))
 		{
 			debuggerMessage("queryThreadInfo failed ", asHex(status));
-			CloseHandle(hThread);
 			continue;
 		}
-
-		threadMemorySketch[threadBasicInfo.TebBaseAddress] = std::string("Teb ")+std::to_string(threadInfo.th32ThreadID); //TODO: add thread id to memory description;
-	}while(Thread32Next(hSnapshot, &threadInfo));
-
-	CloseHandle(hSnapshot);
+		threadMemorySketch[threadBasicInfo.TebBaseAddress] = std::string("Teb ")+std::to_string(idHandle.first); //TODO: add thread id to memory description;
+	}
 	return threadMemorySketch;
 }
 
@@ -514,7 +469,7 @@ HANDLE Debugger::startup(const wchar_t *cmdLine)
 
 	processId = procInfo.dwProcessId;
 
-	activeThreads[procInfo.dwThreadId] = dupHandle(procInfo.hThread);
+	activeThreads[procInfo.dwThreadId] = procInfo.hThread;//dupHandle(procInfo.hThread);
     return procInfo.hProcess;
 }
 
