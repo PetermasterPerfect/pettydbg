@@ -32,6 +32,7 @@ private:
 	bool isAttached;
 	bool isRunning;
 	bool firstBreakpoint; // inspiration from TitanEngine
+	// https://github.com/x64dbg/TitanEngine
 	std::map<DWORD, HANDLE> activeThreads;
 
 	HANDLE startup(const wchar_t*);
@@ -67,5 +68,4 @@ private:
 	std::map<PVOID, std::string> sketchThreadMemory();
 	void cmdtest();
 	void sketchMemoryTest();
-	HANDLE dupHandle(HANDLE);
 };

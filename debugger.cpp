@@ -410,16 +410,15 @@ std::map<PVOID, std::string> Debugger::sketchThreadMemory()
 			debuggerMessage("OpenThread failed ", threadInfo.th32ThreadID, " - ",GetLastError());
 			continue;
 		}
-
-		if(!NT_SUCCESS(queryThreadInfo(hThread, ThreadBasicInformation, &threadBasicInfo, sizeof(THREAD_BASIC_INFORMATION), &ret)))
+		NTSTATUS status = queryThreadInfo(hThread, ThreadBasicInformation, &threadBasicInfo, sizeof(THREAD_BASIC_INFORMATION), &ret);
+		if(!NT_SUCCESS(status))
 		{
-			debuggerMessage("queryThreadInfo failed", GetLastError());
+			debuggerMessage("queryThreadInfo failed ", asHex(status));
 			CloseHandle(hThread);
 			continue;
 		}
 
-		threadMemorySketch[threadBasicInfo.TebBaseAddress] = "Teb"; //TODO: add thread id to memory description;
-		CloseHandle(hThread);
+		threadMemorySketch[threadBasicInfo.TebBaseAddress] = std::string("Teb ")+std::to_string(threadInfo.th32ThreadID); //TODO: add thread id to memory description;
 	}while(Thread32Next(hSnapshot, &threadInfo));
 
 	CloseHandle(hSnapshot);
@@ -444,19 +443,20 @@ void Debugger::exceptionEvent()
 }
 void Debugger::createThreadEvent()
 {
+	activeThreads[debugEvent.dwThreadId] = debugEvent.u.CreateThread.hThread;
 	debuggerMessage("New thread with id ", debugEvent.dwThreadId);
 }
 
 void Debugger::createProcessEvent()
 {
-	activeThreads[debugEvent.dwThreadId] = dupHandle(debugEvent.u.CreateThread.hThread);
 	debuggerMessage("Create Process Event with id ", debugEvent.dwProcessId);
 }
 
 void Debugger::exitThreadEvent()
 {
+	CloseHandle(activeThreads[debugEvent.dwThreadId]);
 	activeThreads.erase(debugEvent.dwThreadId);
-	debuggerMessage("Exiting thread with code ", debugEvent.u.ExitThread.dwExitCode);
+	debuggerMessage("Exiting thread ",  debugEvent.dwThreadId," with code ", debugEvent.u.ExitThread.dwExitCode);
 }
 
 void Debugger::exitProcessEvent()
@@ -606,18 +606,4 @@ PPEB_LDR_DATA Debugger::loadLoaderData()
 
 	delete peb;
 	return loaderData;
-}
-
-HANDLE Debugger::dupHandle(HANDLE src)
-{
-	HANDLE out;
-	if(!DuplicateHandle(GetCurrentProcess(),
-		src,
-		GetCurrentProcess(),
-		&out,
-		THREAD_QUERY_INFORMATION,
-		FALSE,
-		0))
-		debuggerMessage("DuplicateHandle failed ", GetLastError());
-	return out;
 }
