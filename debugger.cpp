@@ -404,7 +404,7 @@ std::map<PVOID, std::string> Debugger::sketchThreadMemory()
 		if(threadInfo.th32OwnerProcessID != processId)
 			continue;
 
-		hThread = OpenThread(THREAD_QUERY_INFORMATION,  FALSE, threadInfo.th32ThreadID);
+		hThread = activeThreads[threadInfo.th32ThreadID];//OpenThread(THREAD_QUERY_INFORMATION,  FALSE, threadInfo.th32ThreadID);
 		if(hThread == NULL)
 		{	
 			debuggerMessage("OpenThread failed ", threadInfo.th32ThreadID, " - ",GetLastError());
@@ -449,11 +449,13 @@ void Debugger::createThreadEvent()
 
 void Debugger::createProcessEvent()
 {
+	activeThreads[debugEvent.dwThreadId] = dupHandle(debugEvent.u.CreateThread.hThread);
 	debuggerMessage("Create Process Event with id ", debugEvent.dwProcessId);
 }
 
 void Debugger::exitThreadEvent()
 {
+	activeThreads.erase(debugEvent.dwThreadId);
 	debuggerMessage("Exiting thread with code ", debugEvent.u.ExitThread.dwExitCode);
 }
 
@@ -511,6 +513,8 @@ HANDLE Debugger::startup(const wchar_t *cmdLine)
     	debuggerMessage("CreateProcessW failed ", GetLastError());
 
 	processId = procInfo.dwProcessId;
+
+	activeThreads[procInfo.dwThreadId] = dupHandle(procInfo.hThread);
     return procInfo.hProcess;
 }
 
@@ -602,4 +606,18 @@ PPEB_LDR_DATA Debugger::loadLoaderData()
 
 	delete peb;
 	return loaderData;
+}
+
+HANDLE Debugger::dupHandle(HANDLE src)
+{
+	HANDLE out;
+	if(!DuplicateHandle(GetCurrentProcess(),
+		src,
+		GetCurrentProcess(),
+		&out,
+		THREAD_QUERY_INFORMATION,
+		FALSE,
+		0))
+		debuggerMessage("DuplicateHandle failed ", GetLastError());
+	return out;
 }
