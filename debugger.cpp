@@ -99,8 +99,10 @@ void Debugger::handleCmd() // TODO: almost everything in this fucntion
 			continueCommand();
 		else if(arguments[0] == "thinfo")
 			enumerateThreadsCommand();		
+		else if(arguments[0] == "m")
+			sketchMemoryTest();	
 		else if(arguments[0] == "mem")
-			sketchMemoryTest();
+			enumerateMemoryPagesCommand();
 		else
 			debuggerMessage("Command isnt recognized");
 		arguments.clear();
@@ -261,14 +263,24 @@ void Debugger::enumerateThreadsCommand()
 
 void Debugger::enumerateMemoryPagesCommand()
 {
+	/*
+	print process memory map page by page
+	it adds info if page is module, stack, heap, peb, teb
+	but it doesnt work correctly if memory region contain more than 1 of those
+	e.g if memory region contains peb, and tebs structures function will print only "peb"
+	*/
 	SIZE_T startAddr = 0;
 	MEMORY_BASIC_INFORMATION memInfo;
 	memset(&memInfo, 0, sizeof(MEMORY_BASIC_INFORMATION));
-	std::map<PVOID, std::string> addressesDescription = sketchMemory();
+	std::map<PVOID, std::string> memoryDescription = sketchMemory();
 
 	while (VirtualQueryEx(hProcess, (LPCVOID)startAddr, &memInfo, sizeof(MEMORY_BASIC_INFORMATION)))
 	{
-
+		std::stringstream descStream;
+		descStream << asHex(memInfo.BaseAddress) << "\t" << asHex(memInfo.RegionSize) << "\t" << memStateAsString(memInfo.State) << "\t" << memTypeAsString(memInfo.Type);
+		if(memoryDescription.find(memInfo.BaseAddress) != memoryDescription.end())
+			descStream << "\t" << memoryDescription[memInfo.BaseAddress];
+		debuggerMessage(descStream.str());
 		startAddr += memInfo.RegionSize;
 	}
 }
@@ -279,9 +291,11 @@ std::map<PVOID, std::string> Debugger::sketchMemory()
 	LIST_ENTRY buf, end;
 	std::map<PVOID, std::string> memorySketch;
 	std::map<PVOID, std::string> threadsMem;
+	//std::vector<std::map<PVOID, std::string>> sectionsMem;
+	SIZE_T pebAddr;
 
 	// obtaining addresses of loaded modules;
-	PPEB peb = loadPeb();
+	PPEB peb = loadPeb(&pebAddr);
 	if(peb == nullptr)
 		return memorySketch;
 
@@ -293,6 +307,7 @@ std::map<PVOID, std::string> Debugger::sketchMemory()
 	}
 
 	memorySketch[peb->ImageBaseAddress]  = "Image base ";
+	memorySketch[(PVOID)pebAddr]  = "Peb";
 	buf = loaderData->InLoadOrderModuleList;
 	if(!ReadProcessMemory(hProcess, loaderData->InLoadOrderModuleList.Flink, &end, sizeof(LIST_ENTRY), NULL))
 	{
@@ -310,11 +325,15 @@ std::map<PVOID, std::string> Debugger::sketchMemory()
 			goto EXIT;
 		}
 		UnicodeStringEx baseModuleName(hProcess, &moduleInfo.BaseDllName);
+		UnicodeStringEx fullModuleName(hProcess, &moduleInfo.FullDllName);
 
 		if(moduleInfo.BaseAddress == peb->ImageBaseAddress) 
-			memorySketch[moduleInfo.BaseAddress] += baseModuleName.toString();
+			memorySketch[moduleInfo.BaseAddress] += fullModuleName.toString();
 		else
-			memorySketch[moduleInfo.BaseAddress] = baseModuleName.toString();
+			memorySketch[moduleInfo.BaseAddress] = fullModuleName.toString();
+
+		//sectionsMem.push_back(sketchModulesSections(moduleInfo.BaseAddress, fullModuleName.toString()));
+		//memorySketch.insert(sectionsMem[sectionsMem.size()-1].begin(), sectionsMem[sectionsMem.size()-1].end());
 
 		if(!ReadProcessMemory(hProcess, buf.Flink, &buf, sizeof(LIST_ENTRY), NULL))
 		{
@@ -338,12 +357,10 @@ std::map<PVOID, std::string> Debugger::sketchMemory()
 	for(ULONG i=0; i<peb->NumberOfHeaps; i++)
 		memorySketch[heaps[i]] = "Heap";
 
-	// obtaing threads information related pages (tebs, stacks)
+	// obtaing threads stuff (tebs, stacks)
 
 	threadsMem = sketchThreadMemory();
-	for(auto i : threadsMem)
-		debuggerMessage(i.first, " - ", i.second);
-	//memorySketch.insert(threadsMem.begin(), threadsMem.end());
+	memorySketch.insert(threadsMem.begin(), threadsMem.end());
 
 EXIT1:
 	delete heaps;
@@ -367,6 +384,7 @@ std::map<PVOID, std::string> Debugger::sketchThreadMemory()
 
 	for(auto idHandle : activeThreads)
 	{
+		TEB teb;
 		THREAD_BASIC_INFORMATION threadBasicInfo;
 		ULONG ret;
 		NTSTATUS status = queryThreadInfo(idHandle.second, ThreadBasicInformation, &threadBasicInfo, sizeof(THREAD_BASIC_INFORMATION), &ret);
@@ -376,8 +394,58 @@ std::map<PVOID, std::string> Debugger::sketchThreadMemory()
 			continue;
 		}
 		threadMemorySketch[threadBasicInfo.TebBaseAddress] = std::string("Teb ")+std::to_string(idHandle.first); //TODO: add thread id to memory description;
+
+		if(!ReadProcessMemory(hProcess, threadBasicInfo.TebBaseAddress, &teb, sizeof(TEB), NULL))
+		{
+			debuggerMessage("ReadProcessMemory TEB ReadProcessMemory failed ", GetLastError());
+			continue;
+		}
+
+		threadMemorySketch[teb.Tib.StackLimit] = std::string("Stack ")+std::to_string(idHandle.first);
 	}
 	return threadMemorySketch;
+}
+
+std::map<PVOID, std::string> Debugger::sketchModulesSections(PVOID base, std::string fullModuleName)
+{
+	std::map<PVOID, std::string> sectionsSkecth;
+	IMAGE_DOS_HEADER dosHeader;
+	IMAGE_NT_HEADERS ntHeaders;
+	if(!ReadProcessMemory(hProcess, base, &dosHeader, sizeof(IMAGE_DOS_HEADER), NULL))
+	{
+		debuggerMessage("ReadProcessMemory dosHeader ReadProcessMemory failed ", GetLastError());
+		return sectionsSkecth;
+	}	
+
+	if(!ReadProcessMemory(hProcess, (PVOID)((SIZE_T)base+dosHeader.e_lfanew), &ntHeaders, sizeof(IMAGE_NT_HEADERS), NULL))
+	{
+		debuggerMessage("ReadProcessMemory ntHeaders ReadProcessMemory failed ", GetLastError());
+		return sectionsSkecth;
+	}
+
+	IMAGE_SECTION_HEADER *sectionsHeaders = new IMAGE_SECTION_HEADER[ntHeaders.FileHeader.NumberOfSections];
+	if(sectionsHeaders == nullptr)
+		return sectionsSkecth;
+
+	PVOID sectionsHeadersStart = (PVOID)((SIZE_T)base+dosHeader.e_lfanew+sizeof(IMAGE_NT_HEADERS));
+	debuggerMessage("sectionsHeadersStart", sectionsHeadersStart);
+	if(!ReadProcessMemory(hProcess, sectionsHeadersStart, sectionsHeaders, 
+			sizeof(IMAGE_SECTION_HEADER)*ntHeaders.FileHeader.NumberOfSections, NULL))
+	{
+		debuggerMessage("ReadProcessMemory sectionsHeaders ReadProcessMemory failed ", GetLastError());
+		delete sectionsHeaders;
+		return sectionsSkecth;
+	}
+
+	for(int i=0; i<ntHeaders.FileHeader.NumberOfSections; i++)
+	{
+		debuggerMessage((PVOID)((SIZE_T)base+sectionsHeaders[i].VirtualAddress), " - ",
+			asHex(sectionsHeaders[i].Misc.VirtualSize)," - ", sectionsHeaders[i].Name);
+		sectionsSkecth[(PVOID)((SIZE_T)base+sectionsHeaders[i].VirtualAddress)] = fullModuleName;
+	}
+
+	delete sectionsHeaders;
+	return sectionsSkecth;
 }
 
 void Debugger::sketchMemoryTest()
@@ -493,7 +561,7 @@ NtQueryInformationThread Debugger::getNtQueryInformationThread()
 	return func;
 }
 
-PPEB Debugger::loadPeb() // loads peb data from debugged process to allocated(heap) buffer so later that memory should be realeased
+PPEB Debugger::loadPeb(SIZE_T *addr) // loads peb data from debugged process to allocated(heap) buffer so later that memory should be realeased
 {
 	NTSTATUS status;
 	PROCESS_BASIC_INFORMATION procInfo;
@@ -516,6 +584,9 @@ PPEB Debugger::loadPeb() // loads peb data from debugged process to allocated(he
 		debuggerMessage("failed to allocate memory for peb");
 		return nullptr;
 	}
+
+	if(addr != nullptr)
+		*addr = (SIZE_T)procInfo.PebBaseAddress;
 
 	if(!ReadProcessMemory(hProcess, procInfo.PebBaseAddress, peb, sizeof(PEB), NULL))
 	{
@@ -561,4 +632,26 @@ PPEB_LDR_DATA Debugger::loadLoaderData()
 
 	delete peb;
 	return loaderData;
+}
+
+std::string Debugger::memStateAsString(DWORD state)
+{
+	if(state == MEM_COMMIT)
+		return std::string("MEM_COMMIT");	
+	else if(state == MEM_FREE)
+		return std::string("MEM_FREE");
+	else if(state == MEM_RESERVE)
+		return std::string("MEM_RESERVE");
+	return std::string("NONE STATE");
+}
+
+std::string Debugger::memTypeAsString(DWORD state)
+{
+	if(state == MEM_IMAGE)
+		return std::string("MEM_IMAGE");	
+	else if(state == MEM_MAPPED)
+		return std::string("MEM_MAPPED");
+	else if(state == MEM_PRIVATE)
+		return std::string("MEM_PRIVATE");
+	return std::string("NONE TYPE");
 }

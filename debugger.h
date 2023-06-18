@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <sstream>
 #include <map>
+#include <vector>
 #include "commandline.h"
 #include "peb.h"
 #include "unicodeStringEx.h"
@@ -45,6 +46,8 @@ private:
 	
 	template<class... Args> void debuggerMessage(Args ...);
 	template <typename T> std::string asHex(T);
+	std::string memStateAsString(DWORD);
+	std::string memTypeAsString(DWORD);
 	
 	void handleCmd();
 	void exceptionSwitchedCased();
@@ -61,11 +64,12 @@ private:
 	
 	NtQueryInformationProcess getNtQueryInformationProcess();
 	NtQueryInformationThread getNtQueryInformationThread();
-	PPEB loadPeb();
+	PPEB loadPeb(SIZE_T* = nullptr);
 	PRTL_USER_PROCESS_PARAMETERS loadProcessParameters();
 	PPEB_LDR_DATA loadLoaderData();
 	std::map<PVOID, std::string> sketchMemory();
 	std::map<PVOID, std::string> sketchThreadMemory();
+	std::map<PVOID, std::string> sketchModulesSections(PVOID, std::string);
 	void cmdtest();
 	void sketchMemoryTest();
 };
