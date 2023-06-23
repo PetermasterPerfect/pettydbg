@@ -71,6 +71,17 @@ template <typename T> std::string Debugger::asHex(T num)
 	return sstream.str();
 }
 
+
+//https://stackoverflow.com/questions/1070497/c-convert-hex-string-to-signed-integer
+SIZE_T Debugger::fromHex(std::string str)
+{
+	SIZE_T x;
+	std::stringstream ss;
+	ss << std::hex << str;
+	ss >> x;
+	return x;
+}
+
 void Debugger::enterDebuggerLoop()
 {
 	memset(&debugEvent, 0, sizeof(DEBUG_EVENT));
@@ -88,7 +99,6 @@ void Debugger::enterDebuggerLoop()
 	}
 }
 
-
 void Debugger::handleCmd() // TODO: almost everything in this fucntion
 {
 	if(cmdToHandle && arguments.size() >= 1)
@@ -103,6 +113,21 @@ void Debugger::handleCmd() // TODO: almost everything in this fucntion
 			sketchMemoryTest();	
 		else if(arguments[0] == "mem")
 			enumerateMemoryPagesCommand();
+		else if(arguments[0] == "n") // step (no differentiation between step in and step over yet)
+			stepCommand();
+		else if(arguments[0] == "bp") // set a breakpoint
+		{
+			if(arguments.size() != 2)
+				debuggerMessage("Bad syntax!!!");
+			else
+			{
+				std::string potentialAddr = arguments[1];
+				if(potentialAddr.substr(0, 2) == "0x")
+					potentialAddr = potentialAddr.substr(2, std::string::npos);
+				
+				setBreakPoint((PVOID)fromHex(potentialAddr));
+			}
+		}
 		else
 			debuggerMessage("Command isnt recognized");
 		arguments.clear();
@@ -213,6 +238,47 @@ void Debugger::exceptionSwitchedCased()
 		}
 	}
 }
+
+void Debugger::stepCommand()
+{
+	HANDLE hT = activeThreads[debugEvent.dwThreadId];
+	CONTEXT ctx;
+	ctx.ContextFlags = CONTEXT_CONTROL;
+
+	if(!GetThreadContext(hT, &ctx))
+	{
+		debuggerMessage("GetThreadContext failed ", GetLastError());
+		return;
+	}
+
+	ctx.EFlags |= 0x100;
+
+	if(!SetThreadContext(hT, &ctx))
+	{
+		debuggerMessage("GetThreadContext failed ", GetLastError());
+		return;
+	}
+
+	ContinueDebugEvent(debugEvent.dwProcessId, debugEvent.dwThreadId, DBG_CONTINUE);
+}
+
+void Debugger::setBreakPoint(PVOID breakAddr)
+{
+	MEMORY_BASIC_INFORMATION memInfo;
+	memset(&memInfo, 0, sizeof(MEMORY_BASIC_INFORMATION));
+	if(!VirtualQueryEx(hProcess, breakAddr, &memInfo, sizeof(MEMORY_BASIC_INFORMATION)))
+	{
+		debuggerMessage("setBreakPoint VirtualQueryEx failed ", GetLastError());
+		return;
+	}
+
+	if(memInfo.State != MEM_COMMIT)
+	{
+		debuggerMessage("Cannot set breakpoint. Memory address is not committed");
+		return;
+	}
+}
+
 
 void Debugger::continueCommand()
 {

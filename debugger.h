@@ -9,6 +9,9 @@
 #include "unicodeStringEx.h"
 #include "thread_info.h"
 
+#define INT_1 0xCD01
+#define INT_3 0xCC
+
 enum states{not_running, running, bpoint};
 
 BOOL WINAPI registerSignals(DWORD);
@@ -35,6 +38,7 @@ private:
 	bool firstBreakpoint; // inspiration from TitanEngine
 	// https://github.com/x64dbg/TitanEngine
 	std::map<DWORD, HANDLE> activeThreads;
+	std::map<PVOID, BYTE> breakpoints;
 
 	HANDLE startup(const wchar_t*);
 	
@@ -46,6 +50,7 @@ private:
 	
 	template<class... Args> void debuggerMessage(Args ...);
 	template <typename T> std::string asHex(T);
+	SIZE_T fromHex(std::string);
 	std::string memStateAsString(DWORD);
 	std::string memTypeAsString(DWORD);
 	
@@ -72,4 +77,7 @@ private:
 	std::map<PVOID, std::string> sketchModulesSections(PVOID, std::string);
 	void cmdtest();
 	void sketchMemoryTest();
+
+	void setBreakPoint(PVOID);
+	void stepCommand();
 };
