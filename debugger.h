@@ -4,6 +4,7 @@
 #include <sstream>
 #include <map>
 #include <vector>
+#include <capstone/capstone.h>
 #include "commandline.h"
 #include "peb.h"
 #include "unicodeStringEx.h"
@@ -39,6 +40,9 @@ private:
 	// https://github.com/x64dbg/TitanEngine
 	std::map<DWORD, HANDLE> activeThreads;
 	std::map<PVOID, BYTE> breakpoints;
+	std::vector<PVOID> pendingBreakpoints;
+	PVOID lastBreakpoint = nullptr; // move it to contructor
+	bool continueTrap = false;
 
 	HANDLE startup(const wchar_t*);
 	
@@ -53,6 +57,7 @@ private:
 	SIZE_T fromHex(std::string);
 	std::string memStateAsString(DWORD);
 	std::string memTypeAsString(DWORD);
+	std::string argumentAsHexAddress(std::string);
 	
 	void handleCmd();
 	void exceptionSwitchedCased();
@@ -77,7 +82,13 @@ private:
 	std::map<PVOID, std::string> sketchModulesSections(PVOID, std::string);
 	void cmdtest();
 	void sketchMemoryTest();
+	
 
+	void dissassembly(PVOID, SIZE_T);
 	void setBreakPoint(PVOID);
 	void stepCommand();
+	void setSystemBreakpoint();
+	void setTrapFlag();
+	void unsetTrapFlag();
+
 };

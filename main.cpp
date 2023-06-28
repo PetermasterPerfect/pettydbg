@@ -19,6 +19,7 @@ int main(int argc, char** argv)
 {
 	wchar_t *cmd = new wchar_t[0x20];
 	wcscpy (cmd, L"\"test.exe\"");
+
 	dbg = new Debugger(cmd);
 	dbg->enterDebuggerLoop();
 /*	

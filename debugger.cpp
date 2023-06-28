@@ -29,7 +29,7 @@ Debugger::Debugger(wchar_t *cmd)
 		fprintf(stderr, "startup failed [%lx]\n", GetLastError());
 
 	printf("Running %ls with id %i\n", cmd, GetProcessId(hProcess));
-	firstBreakpoint = true;
+	firstBreakpoint = false;
 	state = not_running;
 	SetConsoleCtrlHandler(registerSignals, TRUE);
 	DebugSetProcessKillOnExit(TRUE);
@@ -82,6 +82,15 @@ SIZE_T Debugger::fromHex(std::string str)
 	return x;
 }
 
+std::string Debugger::argumentAsHexAddress(std::string arg)
+{
+	std::string potentialAddr = arg;
+	if(potentialAddr.substr(0, 2) == "0x")
+		potentialAddr = potentialAddr.substr(2, std::string::npos);
+
+	return potentialAddr;
+}
+
 void Debugger::enterDebuggerLoop()
 {
 	memset(&debugEvent, 0, sizeof(DEBUG_EVENT));
@@ -113,20 +122,23 @@ void Debugger::handleCmd() // TODO: almost everything in this fucntion
 			sketchMemoryTest();	
 		else if(arguments[0] == "mem")
 			enumerateMemoryPagesCommand();
+		// else if(arguments[0] == "systembp")
+		// 	setSystemBreakpoint();
 		else if(arguments[0] == "n") // step (no differentiation between step in and step over yet)
 			stepCommand();
 		else if(arguments[0] == "bp") // set a breakpoint
 		{
 			if(arguments.size() != 2)
 				debuggerMessage("Bad syntax!!!");
+			else	
+				setBreakPoint((PVOID)fromHex(argumentAsHexAddress(arguments[1])));
+		}
+		else if(arguments[0] == "dis")
+		{
+			if(arguments.size() != 3)
+				debuggerMessage("Bad syntax!!!");
 			else
-			{
-				std::string potentialAddr = arguments[1];
-				if(potentialAddr.substr(0, 2) == "0x")
-					potentialAddr = potentialAddr.substr(2, std::string::npos);
-				
-				setBreakPoint((PVOID)fromHex(potentialAddr));
-			}
+				dissassembly((PVOID)fromHex(argumentAsHexAddress(arguments[1])), stoi(arguments[2]));
 		}
 		else
 			debuggerMessage("Command isnt recognized");
@@ -137,35 +149,47 @@ void Debugger::handleCmd() // TODO: almost everything in this fucntion
 
 void Debugger::exceptionSwitchedCased()
 {
-	if(state == not_running)
-		return;
+	// if(state == not_running)
+	// 	return;
 	
 	switch(debugEvent.dwDebugEventCode)
 	{
 		//TODO: first chance exception
 		case EXCEPTION_DEBUG_EVENT:
 		{
-			exceptionEvent();
 			EXCEPTION_DEBUG_INFO& exception = debugEvent.u.Exception;
 			switch( exception.ExceptionRecord.ExceptionCode)
 			{
 				case STATUS_BREAKPOINT:
 				{
-					if(firstBreakpoint)
+					// if(firstBreakpoint)
+					// {
+					// 	firstBreakpoint = false;
+					// 	if(!ContinueDebugEvent(debugEvent.dwProcessId, 
+					// 	debugEvent.dwThreadId, DBG_CONTINUE))
+					// 		debuggerMessage("ContinueDebugEvent failed ", GetLastError());
+					// 	state 	= running;
+					// }
+					break;
+				}
+				case EXCEPTION_SINGLE_STEP:
+				{
+					if(lastBreakpoint != nullptr)
 					{
-						firstBreakpoint = false;
-						if(!ContinueDebugEvent(debugEvent.dwProcessId, 
-						debugEvent.dwThreadId, DBG_CONTINUE))
-							debuggerMessage("ContinueDebugEvent failed ", GetLastError());
-						state 	= running;
+						BYTE int3 = 0xcc;
+						if(!WriteProcessMemory(hProcess, lastBreakpoint, &int3, sizeof(BYTE), NULL))
+							debuggerMessage("EXCEPTION_SINGLE_STEP WriteProcessMemory failed ", GetLastError());
+						lastBreakpoint == nullptr;
+						if(continueTrap)
+						{
+							ContinueDebugEvent(debugEvent.dwProcessId, debugEvent.dwThreadId, DBG_CONTINUE);
+							continueTrap = false;
+						}
 					}
 					break;
 				}
-				default:
-				{
-					debuggerMessage("(default)breakpoint, thread id ", debugEvent.dwThreadId);
-				}
 			}
+			exceptionEvent();
 			break;
 		}
 		
@@ -239,33 +263,76 @@ void Debugger::exceptionSwitchedCased()
 	}
 }
 
+void Debugger::setSystemBreakpoint()
+{
+	if(state != not_running)
+	{
+		debuggerMessage("No point in running this command now - sytem breakpoint was alread hit");
+		return;
+	}
+
+	if(arguments.size() < 2)
+	{
+		debuggerMessage("Bad command - no argument");
+		return;
+	}
+
+	if(arguments[1] == "1")
+		firstBreakpoint = true;
+	else if(arguments[1] == "0")
+		firstBreakpoint = false;
+	else
+		debuggerMessage("Bad argument - expected 1 or 0, given \"", arguments[1], "\"");
+
+}
+
+void Debugger::dissassembly(PVOID addr, SIZE_T sz)
+{
+	csh handle;
+	cs_insn *insn;
+	size_t count;
+
+	if (cs_open(CS_ARCH_X86, CS_MODE_64, &handle) != CS_ERR_OK)
+		return ;
+	count = cs_disasm(handle, (const uint8_t*)addr, sz, 0x1000, 0, &insn);
+	if (count > 0) {
+		size_t j;
+		for (j = 0; j < count; j++) {
+			printf("0x%p\t%s\t\t%s\n", insn[j].address, insn[j].mnemonic,
+					insn[j].op_str);
+		}
+
+		cs_free(insn, count);
+	} else
+		printf("ERROR: Failed to disassemble given code!\n");
+
+	cs_close(&handle);
+}
+
 void Debugger::stepCommand()
 {
-	HANDLE hT = activeThreads[debugEvent.dwThreadId];
-	CONTEXT ctx;
-	ctx.ContextFlags = CONTEXT_CONTROL;
-
-	if(!GetThreadContext(hT, &ctx))
-	{
-		debuggerMessage("GetThreadContext failed ", GetLastError());
-		return;
-	}
-
-	ctx.EFlags |= 0x100;
-
-	if(!SetThreadContext(hT, &ctx))
-	{
-		debuggerMessage("GetThreadContext failed ", GetLastError());
-		return;
-	}
-
+	setTrapFlag();
 	ContinueDebugEvent(debugEvent.dwProcessId, debugEvent.dwThreadId, DBG_CONTINUE);
 }
 
 void Debugger::setBreakPoint(PVOID breakAddr)
 {
+	BYTE buf, int3;
 	MEMORY_BASIC_INFORMATION memInfo;
 	memset(&memInfo, 0, sizeof(MEMORY_BASIC_INFORMATION));
+
+	if(state == not_running)
+	{
+		pendingBreakpoints.push_back(breakAddr);
+		return;
+	}
+
+	if(breakpoints.find(breakAddr) != breakpoints.end())
+	{
+		debuggerMessage("Breakpoint was alread set on given address");
+		return;
+	}
+
 	if(!VirtualQueryEx(hProcess, breakAddr, &memInfo, sizeof(MEMORY_BASIC_INFORMATION)))
 	{
 		debuggerMessage("setBreakPoint VirtualQueryEx failed ", GetLastError());
@@ -277,17 +344,37 @@ void Debugger::setBreakPoint(PVOID breakAddr)
 		debuggerMessage("Cannot set breakpoint. Memory address is not committed");
 		return;
 	}
+
+	if(!ReadProcessMemory(hProcess, breakAddr, &buf, sizeof(BYTE), NULL))
+	{
+		debuggerMessage("setBreakPoint ReadProcessMemory failed ", GetLastError());
+		return;
+	}
+
+	breakpoints[breakAddr] = buf;
+	int3 = 0xcc;
+
+	if(!WriteProcessMemory(hProcess, breakAddr, &int3, sizeof(BYTE), NULL))
+	{
+		debuggerMessage("WriteProcessMemory ReadProcessMemory failed ", GetLastError());
+		return;
+	}
 }
 
 
 void Debugger::continueCommand()
 {
+	if(lastBreakpoint != nullptr)
+	{
+		setTrapFlag();
+		continueTrap = true;
+	}
 	ContinueDebugEvent(debugEvent.dwProcessId, debugEvent.dwThreadId, DBG_CONTINUE);
 	state = running;
 }
 
 
-//TODO: implement changing directory when restarting
+//TODO: implement changing directory when restarting debuggee
 void Debugger::runCommand()
 {
 	if(state == not_running)
@@ -523,12 +610,20 @@ void Debugger::sketchMemoryTest()
 
 void Debugger::exceptionEvent()
 {
-	EXCEPTION_RECORD *expceptionRecord = &debugEvent.u.Exception.ExceptionRecord;
+	EXCEPTION_RECORD *exceptionRecord = &debugEvent.u.Exception.ExceptionRecord;
+	PVOID addr = exceptionRecord->ExceptionAddress;
 	state = bpoint;
+
+	if(breakpoints.find(addr) != breakpoints.end())
+		if(WriteProcessMemory(hProcess, addr, &breakpoints[addr], sizeof(BYTE), NULL))
+			lastBreakpoint = addr;
+		else
+			debuggerMessage("exceptionEvent WriteProcessMemory failed ", GetLastError());
+
 	debuggerMessage("Exception ", 
-		asHex(expceptionRecord->ExceptionCode),
+		asHex(exceptionRecord->ExceptionCode),
 		" at address ", 
-		expceptionRecord->ExceptionAddress);
+		exceptionRecord->ExceptionAddress);
 }
 void Debugger::createThreadEvent()
 {
@@ -720,4 +815,46 @@ std::string Debugger::memTypeAsString(DWORD state)
 	else if(state == MEM_PRIVATE)
 		return std::string("MEM_PRIVATE");
 	return std::string("NONE TYPE");
+}
+
+void Debugger::setTrapFlag()
+{
+	HANDLE hT = activeThreads[debugEvent.dwThreadId];
+	CONTEXT ctx;
+	ctx.ContextFlags = CONTEXT_CONTROL;
+
+	if(!GetThreadContext(hT, &ctx))
+	{
+		debuggerMessage("GetThreadContext failed ", GetLastError());
+		return;
+	}
+
+	ctx.EFlags |= 0x100; // setting trap flag
+
+	if(!SetThreadContext(hT, &ctx))
+	{
+		debuggerMessage("GetThreadContext failed ", GetLastError());
+		return;
+	}
+}
+
+void Debugger::unsetTrapFlag()
+{
+	HANDLE hT = activeThreads[debugEvent.dwThreadId];
+	CONTEXT ctx;
+	ctx.ContextFlags = CONTEXT_CONTROL;
+
+	if(!GetThreadContext(hT, &ctx))
+	{
+		debuggerMessage("GetThreadContext failed ", GetLastError());
+		return;
+	}
+
+	ctx.EFlags &= 0xfffffeff; // unsetting trap flag
+
+	if(!SetThreadContext(hT, &ctx))
+	{
+		debuggerMessage("GetThreadContext failed ", GetLastError());
+		return;
+	}
 }
