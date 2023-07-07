@@ -117,6 +117,8 @@ void Debugger::handleCmd() // TODO: almost everything in this function
 	{
 		if(arguments[0] == "c")
 			continueCommand();
+		else if(arguments[0] == "run") // restart
+			runCommand();
 		else if(arguments[0] == "thinfo")
 			enumerateThreadsCommand();		
 		else if(arguments[0] == "m")
@@ -136,7 +138,7 @@ void Debugger::handleCmd() // TODO: almost everything in this function
 			else
 				showStack(stoi(arguments[1]));
 		}
-		else if(arguments[0] == "bp") // set a breakpoint
+		else if(arguments[0] == "bp") // setting a breakpoint
 		{
 			if(arguments.size() != 2)
 				debuggerMessage("Bad syntax!!!");
@@ -172,20 +174,22 @@ void Debugger::exceptionSwitchedCased()
 			{
 				case STATUS_BREAKPOINT:
 				{
-					// if(firstBreakpoint)
-					// {
-					// 	firstBreakpoint = false;
-					// 	if(!ContinueDebugEvent(debugEvent.dwProcessId, 
-					// 	debugEvent.dwThreadId, DBG_CONTINUE))
-					// 		debuggerMessage("ContinueDebugEvent failed ", GetLastError());
-					// 	state 	= running;
-					// }
+					debuggerMessage("STATUS_BREAKPOINT");
+					if(firstBreakpoint)
+					{
+						for(auto breakpoint : breakpoints)
+						{
+							PVOID buf = breakpoint.first;
+							breakpoints.erase(buf);
+							setBreakPoint(buf);
+						}
+						firstBreakpoint = false;
+					}
 					break;
 				}
 				case EXCEPTION_SINGLE_STEP:
 				{
-					if(0)
-					//if(lastBreakpoint != nullptr)
+					if(lastBreakpoint != nullptr)
 					{
 						debuggerMessage("lastBreakpoint ", lastBreakpoint);
 						BYTE int3 = 0xcc;
@@ -208,8 +212,8 @@ void Debugger::exceptionSwitchedCased()
 		case CREATE_THREAD_DEBUG_EVENT:
 		{
 			createThreadEvent();
-			//continueIf(running);
-			ContinueDebugEvent(debugEvent.dwProcessId, debugEvent.dwThreadId, DBG_CONTINUE);
+			continueIf(running);
+			//ContinueDebugEvent(debugEvent.dwProcessId, debugEvent.dwThreadId, DBG_CONTINUE);
 			break;
 		}
 		
@@ -400,12 +404,6 @@ void Debugger::setBreakPoint(PVOID breakAddr)
 	MEMORY_BASIC_INFORMATION memInfo;
 	memset(&memInfo, 0, sizeof(MEMORY_BASIC_INFORMATION));
 
-	if(state == not_running)
-	{
-		pendingBreakpoints.push_back(breakAddr);
-		return;
-	}
-
 	if(breakpoints.find(breakAddr) != breakpoints.end())
 	{
 		debuggerMessage("Breakpoint was alread set on given address");
@@ -477,6 +475,8 @@ void Debugger::runCommand()
 		hProcess = startup(cmd.actualString.Buffer);
 		state = not_running;
 		firstBreakpoint = true;
+		lastBreakpoint = nullptr;
+		activeThreads.clear();
 		delete procParams;
 	}
 }
@@ -693,10 +693,9 @@ void Debugger::exceptionEvent()
 	PVOID addr = exceptionRecord->ExceptionAddress;
 	state = bpoint;
 
-	if(0)
-	//if(breakpoints.find(addr) != breakpoints.end())
+	//if(0)
+	if(breakpoints.find(addr) != breakpoints.end())
 	{
-		debuggerMessage("breakpoint found ", addr);
 		if(WriteProcessMemory(hProcess, addr, &breakpoints[addr], sizeof(BYTE), NULL))
 			lastBreakpoint = addr;
 		else
@@ -914,6 +913,7 @@ void Debugger::setTrapFlag()
 	CONTEXT ctx;
 	ctx.ContextFlags = CONTEXT_CONTROL;
 
+	SuspendThread(hT);
 	if(!GetThreadContext(hT, &ctx))
 	{
 		debuggerMessage("GetThreadContext failed ", GetLastError());
@@ -927,6 +927,7 @@ void Debugger::setTrapFlag()
 		debuggerMessage("GetThreadContext failed ", GetLastError());
 		return;
 	}
+	ResumeThread(hT);
 }
 
 void Debugger::unsetTrapFlag()

@@ -41,7 +41,7 @@ private:
 	std::map<DWORD, HANDLE> activeThreads;
 	std::map<PVOID, BYTE> breakpoints;
 	std::vector<PVOID> pendingBreakpoints;
-	PVOID lastBreakpoint = nullptr; // move it to contructor
+	PVOID lastBreakpoint = nullptr;
 	bool continueTrap = false;
 
 	HANDLE startup(const wchar_t*);
