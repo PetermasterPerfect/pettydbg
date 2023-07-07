@@ -45,6 +45,7 @@ private:
 	bool continueTrap = false;
 
 	HANDLE startup(const wchar_t*);
+	void continueIf(states);
 	
 	void continueCommand();
 	void runCommand();
@@ -57,7 +58,7 @@ private:
 	SIZE_T fromHex(std::string);
 	std::string memStateAsString(DWORD);
 	std::string memTypeAsString(DWORD);
-	std::string argumentAsHexAddress(std::string);
+	std::string argumentAsHex(std::string);
 	
 	void handleCmd();
 	void exceptionSwitchedCased();
@@ -86,9 +87,11 @@ private:
 
 	void dissassembly(PVOID, SIZE_T);
 	void setBreakPoint(PVOID);
-	void stepCommand();
+	void singleStepCommand();
 	void setSystemBreakpoint();
 	void setTrapFlag();
 	void unsetTrapFlag();
+	void showStack(SIZE_T);
+	void showGeneralPurposeRegisters();
 
 };

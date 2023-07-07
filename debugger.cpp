@@ -50,7 +50,7 @@ Debugger::Debugger(DWORD pid)
 		return;
 	}
 
-	printf("Attaching to process with id %l\n", pid);
+	printf("Attaching to process with id %i\n", pid);
 	processId = pid;
 	firstBreakpoint = false;
 	state = bpoint;
@@ -82,7 +82,7 @@ SIZE_T Debugger::fromHex(std::string str)
 	return x;
 }
 
-std::string Debugger::argumentAsHexAddress(std::string arg)
+std::string Debugger::argumentAsHex(std::string arg)
 {
 	std::string potentialAddr = arg;
 	if(potentialAddr.substr(0, 2) == "0x")
@@ -94,27 +94,28 @@ std::string Debugger::argumentAsHexAddress(std::string arg)
 void Debugger::enterDebuggerLoop()
 {
 	memset(&debugEvent, 0, sizeof(DEBUG_EVENT));
+	if(WaitForDebugEvent(&debugEvent, 100) && debugEvent.dwDebugEventCode == CREATE_PROCESS_DEBUG_EVENT)
+		continueIf(not_running);
+
 	while(true)
 	{
 		if(state != running)
 		{
 			commandLineInterface();
 			if(cmdToHandle == true)
-				handleCmd();		
-		}		
+				handleCmd();
+		}
 		if(!WaitForDebugEvent(&debugEvent, 10))
 			continue;
 		exceptionSwitchedCased();
 	}
 }
 
-void Debugger::handleCmd() // TODO: almost everything in this fucntion
+void Debugger::handleCmd() // TODO: almost everything in this function
 {
 	if(cmdToHandle && arguments.size() >= 1)
 	{
-		if(arguments[0] == "run")
-			runCommand();
-		else if(arguments[0] == "c")
+		if(arguments[0] == "c")
 			continueCommand();
 		else if(arguments[0] == "thinfo")
 			enumerateThreadsCommand();		
@@ -124,21 +125,30 @@ void Debugger::handleCmd() // TODO: almost everything in this fucntion
 			enumerateMemoryPagesCommand();
 		// else if(arguments[0] == "systembp")
 		// 	setSystemBreakpoint();
-		else if(arguments[0] == "n") // step (no differentiation between step in and step over yet)
-			stepCommand();
+		else if(arguments[0] == "n") // single step (no differentiation between step in and step over yet)
+			singleStepCommand();
+		else if(arguments[0] == "reg")
+			showGeneralPurposeRegisters();
+		else if(arguments[0] == "stack")
+		{
+			if(arguments.size() != 2)
+				debuggerMessage("Bad syntax!!!");
+			else
+				showStack(stoi(arguments[1]));
+		}
 		else if(arguments[0] == "bp") // set a breakpoint
 		{
 			if(arguments.size() != 2)
 				debuggerMessage("Bad syntax!!!");
 			else	
-				setBreakPoint((PVOID)fromHex(argumentAsHexAddress(arguments[1])));
+				setBreakPoint((PVOID)fromHex(argumentAsHex(arguments[1])));
 		}
 		else if(arguments[0] == "dis")
 		{
 			if(arguments.size() != 3)
 				debuggerMessage("Bad syntax!!!");
 			else
-				dissassembly((PVOID)fromHex(argumentAsHexAddress(arguments[1])), stoi(arguments[2]));
+				dissassembly((PVOID)fromHex(argumentAsHex(arguments[1])), stoi(arguments[2]));
 		}
 		else
 			debuggerMessage("Command isnt recognized");
@@ -151,7 +161,7 @@ void Debugger::exceptionSwitchedCased()
 {
 	// if(state == not_running)
 	// 	return;
-	
+	// debuggerMessage("State ", state);
 	switch(debugEvent.dwDebugEventCode)
 	{
 		//TODO: first chance exception
@@ -174,8 +184,10 @@ void Debugger::exceptionSwitchedCased()
 				}
 				case EXCEPTION_SINGLE_STEP:
 				{
-					if(lastBreakpoint != nullptr)
+					if(0)
+					//if(lastBreakpoint != nullptr)
 					{
+						debuggerMessage("lastBreakpoint ", lastBreakpoint);
 						BYTE int3 = 0xcc;
 						if(!WriteProcessMemory(hProcess, lastBreakpoint, &int3, sizeof(BYTE), NULL))
 							debuggerMessage("EXCEPTION_SINGLE_STEP WriteProcessMemory failed ", GetLastError());
@@ -196,6 +208,7 @@ void Debugger::exceptionSwitchedCased()
 		case CREATE_THREAD_DEBUG_EVENT:
 		{
 			createThreadEvent();
+			//continueIf(running);
 			ContinueDebugEvent(debugEvent.dwProcessId, debugEvent.dwThreadId, DBG_CONTINUE);
 			break;
 		}
@@ -203,25 +216,21 @@ void Debugger::exceptionSwitchedCased()
 		case CREATE_PROCESS_DEBUG_EVENT:
 		{
 			createProcessEvent();
-			ContinueDebugEvent(debugEvent.dwProcessId, debugEvent.dwThreadId, DBG_CONTINUE);
+			continueIf(not_running);
 			break;
 		}
 		
 		case EXIT_THREAD_DEBUG_EVENT:
 		{
 			exitThreadEvent();
-			ContinueDebugEvent(debugEvent.dwProcessId, 
-				debugEvent.dwThreadId,
-				DBG_CONTINUE);
+			continueIf(running);
 			break;
 		}
 		
 		case EXIT_PROCESS_DEBUG_EVENT:
 		{
 			exitThreadEvent();
-			ContinueDebugEvent(debugEvent.dwProcessId, 
-				debugEvent.dwThreadId,
-				DBG_CONTINUE);
+			continueIf(running);
 			break;
 		}
 		
@@ -235,25 +244,19 @@ void Debugger::exceptionSwitchedCased()
 		case UNLOAD_DLL_DEBUG_EVENT:
 		{
 			unloadDllEvent();
-			ContinueDebugEvent(debugEvent.dwProcessId, 
-				debugEvent.dwThreadId,
-				DBG_CONTINUE);
+			continueIf(running);
 			break;
 		}
 		case OUTPUT_DEBUG_STRING_EVENT:
 		{
 			outputDebugStringEvent();
-			ContinueDebugEvent(debugEvent.dwProcessId, 
-				debugEvent.dwThreadId,
-				DBG_CONTINUE);
+			continueIf(running);
 			break;
 		}
 		case RIP_EVENT:
 		{
 			ripEvent();
-			ContinueDebugEvent(debugEvent.dwProcessId, 
-				debugEvent.dwThreadId,
-				DBG_CONTINUE);
+			continueIf(running);
 			break;
 		}			
 		default:
@@ -286,20 +289,95 @@ void Debugger::setSystemBreakpoint()
 
 }
 
+void Debugger::showStack(SIZE_T sz)
+{
+	PVOID stackAddr;
+	PVOID *stackToView;
+	HANDLE hT = activeThreads[debugEvent.dwThreadId];
+	CONTEXT ctx;
+	ctx.ContextFlags = CONTEXT_CONTROL;
+
+	if(!GetThreadContext(hT, &ctx))
+	{
+		debuggerMessage("GetThreadContext failed ", GetLastError());
+		return;
+	}
+
+	stackAddr = (PVOID)ctx.Rsp;
+	stackToView = new PVOID[sz];
+	if(stackToView == nullptr)
+		return;
+
+	SuspendThread(hT);
+	if(!ReadProcessMemory(hProcess, stackAddr, stackToView, sizeof(PVOID)*sz, NULL))
+	{
+		debuggerMessage("showstack ReadProcessMemory %l", GetLastError());
+		delete[] stackToView;
+		return;
+	}
+	ResumeThread(hT);
+
+
+	for(SIZE_T i=0; i<sz; i++)
+		debuggerMessage((PVOID)((SIZE_T)stackAddr+sizeof(SIZE_T)*i), "\t", stackToView[i]);
+
+	delete[] stackToView;
+}
+
+void Debugger::showGeneralPurposeRegisters()
+{
+	HANDLE hT = activeThreads[debugEvent.dwThreadId];
+	CONTEXT ctx;
+	ctx.ContextFlags = CONTEXT_ALL;
+
+	SuspendThread(hT);
+	if(!GetThreadContext(hT, &ctx))
+	{
+		debuggerMessage("GetThreadContext failed ", GetLastError());
+		return;
+	}
+	debuggerMessage("Rax=", (PVOID)ctx.Rax); 
+	debuggerMessage("Rbx=", (PVOID)ctx.Rbx); 
+	debuggerMessage("Rcx=", (PVOID)ctx.Rcx); 
+	debuggerMessage("Rdx=", (PVOID)ctx.Rdx); 
+	debuggerMessage("Rbx=", (PVOID)ctx.Rbx); 
+	debuggerMessage("Rsp=", (PVOID)ctx.Rsp); 
+	debuggerMessage("Rbp=", (PVOID)ctx.Rbp); 
+	debuggerMessage("Rsi=", (PVOID)ctx.Rsi); 
+	debuggerMessage("Rdi=", (PVOID)ctx.Rdi); 
+	debuggerMessage("Rip=", (PVOID)ctx.Rip);
+
+	ResumeThread(hT);
+}
+
 void Debugger::dissassembly(PVOID addr, SIZE_T sz)
 {
+
 	csh handle;
 	cs_insn *insn;
 	size_t count;
 
 	if (cs_open(CS_ARCH_X86, CS_MODE_64, &handle) != CS_ERR_OK)
 		return ;
-	count = cs_disasm(handle, (const uint8_t*)addr, sz, 0x1000, 0, &insn);
+
+	BYTE *buf = new BYTE[sz];
+	if(buf == nullptr)
+		return;
+	if(!ReadProcessMemory(hProcess, addr, buf, sz, NULL))
+	{
+		debuggerMessage("dissassembly ReadProcessMemory failed ", GetLastError());
+		delete[] buf;
+		return;
+	}
+
+	count = cs_disasm(handle, (const uint8_t*)buf, sz, (uint64_t)addr, 0, &insn);
 	if (count > 0) {
 		size_t j;
 		for (j = 0; j < count; j++) {
-			printf("0x%p\t%s\t\t%s\n", insn[j].address, insn[j].mnemonic,
-					insn[j].op_str);
+			printf("%p ", insn[j].address);
+			for(int i=0; i<insn[j].size; i++)
+				printf("%x", insn[j].bytes[i]);
+			printf(" %s\t%s\n", insn[j].mnemonic, insn[j].op_str);
 		}
 
 		cs_free(insn, count);
@@ -307,9 +385,10 @@ void Debugger::dissassembly(PVOID addr, SIZE_T sz)
 		printf("ERROR: Failed to disassemble given code!\n");
 
 	cs_close(&handle);
+	delete[] buf;
 }
 
-void Debugger::stepCommand()
+void Debugger::singleStepCommand()
 {
 	setTrapFlag();
 	ContinueDebugEvent(debugEvent.dwProcessId, debugEvent.dwThreadId, DBG_CONTINUE);
@@ -384,13 +463,13 @@ void Debugger::runCommand()
 	}
 	else
 	{
-		wchar_t cwdBuf[0x300];
 		PRTL_USER_PROCESS_PARAMETERS procParams = loadProcessParameters();
 		if(procParams == nullptr)
 			return;
 
 		UnicodeStringEx cmd(hProcess, &procParams->CommandLine);
-		UnicodeStringEx cwd(hProcess, &procParams->CurrentDirectoryPath);
+		// wchar_t cwdBuf[0x300];
+		// UnicodeStringEx cwd(hProcess, &procParams->CurrentDirectoryPath);
 
 		TerminateProcess(hProcess, 33);
 		WaitForSingleObject(hProcess, 100);
@@ -614,12 +693,15 @@ void Debugger::exceptionEvent()
 	PVOID addr = exceptionRecord->ExceptionAddress;
 	state = bpoint;
 
-	if(breakpoints.find(addr) != breakpoints.end())
+	if(0)
+	//if(breakpoints.find(addr) != breakpoints.end())
+	{
+		debuggerMessage("breakpoint found ", addr);
 		if(WriteProcessMemory(hProcess, addr, &breakpoints[addr], sizeof(BYTE), NULL))
 			lastBreakpoint = addr;
 		else
 			debuggerMessage("exceptionEvent WriteProcessMemory failed ", GetLastError());
-
+	}
 	debuggerMessage("Exception ", 
 		asHex(exceptionRecord->ExceptionCode),
 		" at address ", 
@@ -671,6 +753,15 @@ void Debugger::ripEvent()
 	debuggerMessage("RIP error number ", debugEvent.u.RipInfo.dwError);
 }
 
+void Debugger::continueIf(states cond)
+{
+	if(state == cond)
+	{
+		ContinueDebugEvent(debugEvent.dwProcessId, debugEvent.dwThreadId, DBG_CONTINUE);
+		state = running;
+	}
+}
+
 HANDLE Debugger::startup(const wchar_t *cmdLine)
 {
     STARTUPINFOW si;
@@ -704,7 +795,7 @@ HANDLE Debugger::startup(const wchar_t *cmdLine)
 
 NtQueryInformationProcess Debugger::getNtQueryInformationProcess()
 {
-	HMODULE hNtdll = GetModuleHandle("ntdll");
+	HMODULE hNtdll = GetModuleHandleA("ntdll");
 	if(hNtdll == NULL)
 		return nullptr;
 
@@ -714,7 +805,7 @@ NtQueryInformationProcess Debugger::getNtQueryInformationProcess()
 
 NtQueryInformationThread Debugger::getNtQueryInformationThread()
 {
-	HMODULE hNtdll = GetModuleHandle("ntdll");
+	HMODULE hNtdll = GetModuleHandleA("ntdll");
 	if(hNtdll == NULL)
 		return nullptr;
 
