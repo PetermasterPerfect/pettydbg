@@ -95,7 +95,7 @@ void Debugger::enterDebuggerLoop()
 {
 	memset(&debugEvent, 0, sizeof(DEBUG_EVENT));
 	if(WaitForDebugEvent(&debugEvent, 100) && debugEvent.dwDebugEventCode == CREATE_PROCESS_DEBUG_EVENT)
-		continueIf(not_running);
+		continueIfAndRun(not_running);
 
 	while(true)
 	{
@@ -185,21 +185,43 @@ void Debugger::exceptionSwitchedCased()
 						}
 						firstBreakpoint = false;
 					}
+					PVOID breakAddr = exception.ExceptionRecord.ExceptionAddress;
+					if(breakpoints.find(breakAddr) != breakpoints.end())
+					{
+						HANDLE hT = activeThreads[debugEvent.dwThreadId];
+						CONTEXT ctx;
+						ctx.ContextFlags = CONTEXT_CONTROL;
+
+						if(!GetThreadContext(hT, &ctx))
+						{
+							debuggerMessage("GetThreadContext failed ", GetLastError());
+							return;
+						}
+						ctx.Rip = (SIZE_T)breakAddr;
+
+						if(!SetThreadContext(hT, &ctx))
+						{
+							debuggerMessage("GetThreadContext failed ", GetLastError());
+							return;
+						}
+					}
+
 					break;
 				}
 				case EXCEPTION_SINGLE_STEP:
 				{
 					if(lastBreakpoint != nullptr)
 					{
-						debuggerMessage("lastBreakpoint ", lastBreakpoint);
 						BYTE int3 = 0xcc;
 						if(!WriteProcessMemory(hProcess, lastBreakpoint, &int3, sizeof(BYTE), NULL))
 							debuggerMessage("EXCEPTION_SINGLE_STEP WriteProcessMemory failed ", GetLastError());
-						lastBreakpoint == nullptr;
+						lastBreakpoint = nullptr;
 						if(continueTrap)
 						{
-							ContinueDebugEvent(debugEvent.dwProcessId, debugEvent.dwThreadId, DBG_CONTINUE);
+							unsetTrapFlag();
 							continueTrap = false;
+							continueCommand();
+							return;
 						}
 					}
 					break;
@@ -212,7 +234,7 @@ void Debugger::exceptionSwitchedCased()
 		case CREATE_THREAD_DEBUG_EVENT:
 		{
 			createThreadEvent();
-			continueIf(running);
+			continueIfAndRun(running);
 			//ContinueDebugEvent(debugEvent.dwProcessId, debugEvent.dwThreadId, DBG_CONTINUE);
 			break;
 		}
@@ -220,21 +242,21 @@ void Debugger::exceptionSwitchedCased()
 		case CREATE_PROCESS_DEBUG_EVENT:
 		{
 			createProcessEvent();
-			continueIf(not_running);
+			continueIfAndRun(not_running);
 			break;
 		}
 		
 		case EXIT_THREAD_DEBUG_EVENT:
 		{
 			exitThreadEvent();
-			continueIf(running);
+			continueIfAndRun(running);
 			break;
 		}
 		
 		case EXIT_PROCESS_DEBUG_EVENT:
 		{
 			exitThreadEvent();
-			continueIf(running);
+			continueIfAndRun(running);
 			break;
 		}
 		
@@ -248,19 +270,19 @@ void Debugger::exceptionSwitchedCased()
 		case UNLOAD_DLL_DEBUG_EVENT:
 		{
 			unloadDllEvent();
-			continueIf(running);
+			continueIfAndRun(running);
 			break;
 		}
 		case OUTPUT_DEBUG_STRING_EVENT:
 		{
 			outputDebugStringEvent();
-			continueIf(running);
+			continueIfAndRun(running);
 			break;
 		}
 		case RIP_EVENT:
 		{
 			ripEvent();
-			continueIf(running);
+			continueIfAndRun(running);
 			break;
 		}			
 		default:
@@ -299,7 +321,7 @@ void Debugger::showStack(SIZE_T sz)
 	PVOID *stackToView;
 	HANDLE hT = activeThreads[debugEvent.dwThreadId];
 	CONTEXT ctx;
-	ctx.ContextFlags = CONTEXT_CONTROL;
+	ctx.ContextFlags = CONTEXT_ALL;
 
 	if(!GetThreadContext(hT, &ctx))
 	{
@@ -312,14 +334,14 @@ void Debugger::showStack(SIZE_T sz)
 	if(stackToView == nullptr)
 		return;
 
-	SuspendThread(hT);
+	
 	if(!ReadProcessMemory(hProcess, stackAddr, stackToView, sizeof(PVOID)*sz, NULL))
 	{
 		debuggerMessage("showstack ReadProcessMemory %l", GetLastError());
 		delete[] stackToView;
 		return;
 	}
-	ResumeThread(hT);
+	
 
 
 	for(SIZE_T i=0; i<sz; i++)
@@ -334,7 +356,6 @@ void Debugger::showGeneralPurposeRegisters()
 	CONTEXT ctx;
 	ctx.ContextFlags = CONTEXT_ALL;
 
-	SuspendThread(hT);
 	if(!GetThreadContext(hT, &ctx))
 	{
 		debuggerMessage("GetThreadContext failed ", GetLastError());
@@ -350,8 +371,6 @@ void Debugger::showGeneralPurposeRegisters()
 	debuggerMessage("Rsi=", (PVOID)ctx.Rsi); 
 	debuggerMessage("Rdi=", (PVOID)ctx.Rdi); 
 	debuggerMessage("Rip=", (PVOID)ctx.Rip);
-
-	ResumeThread(hT);
 }
 
 void Debugger::dissassembly(PVOID addr, SIZE_T sz)
@@ -394,6 +413,8 @@ void Debugger::dissassembly(PVOID addr, SIZE_T sz)
 
 void Debugger::singleStepCommand()
 {
+	// EXCEPTION_DEBUG_INFO& exception = debugEvent.u.Exception;
+	// if(exception.ExceptionRecord.ExceptionCode != STATUS_BREAKPOINT)
 	setTrapFlag();
 	ContinueDebugEvent(debugEvent.dwProcessId, debugEvent.dwThreadId, DBG_CONTINUE);
 }
@@ -752,7 +773,7 @@ void Debugger::ripEvent()
 	debuggerMessage("RIP error number ", debugEvent.u.RipInfo.dwError);
 }
 
-void Debugger::continueIf(states cond)
+void Debugger::continueIfAndRun(states cond)
 {
 	if(state == cond)
 	{
@@ -787,7 +808,6 @@ HANDLE Debugger::startup(const wchar_t *cmdLine)
     	debuggerMessage("CreateProcessW failed ", GetLastError());
 
 	processId = procInfo.dwProcessId;
-
 	activeThreads[procInfo.dwThreadId] = procInfo.hThread;//dupHandle(procInfo.hThread);
     return procInfo.hProcess;
 }
@@ -913,7 +933,7 @@ void Debugger::setTrapFlag()
 	CONTEXT ctx;
 	ctx.ContextFlags = CONTEXT_CONTROL;
 
-	SuspendThread(hT);
+	
 	if(!GetThreadContext(hT, &ctx))
 	{
 		debuggerMessage("GetThreadContext failed ", GetLastError());
@@ -927,7 +947,7 @@ void Debugger::setTrapFlag()
 		debuggerMessage("GetThreadContext failed ", GetLastError());
 		return;
 	}
-	ResumeThread(hT);
+	
 }
 
 void Debugger::unsetTrapFlag()

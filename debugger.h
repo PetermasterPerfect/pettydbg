@@ -40,12 +40,11 @@ private:
 	// https://github.com/x64dbg/TitanEngine
 	std::map<DWORD, HANDLE> activeThreads;
 	std::map<PVOID, BYTE> breakpoints;
-	std::vector<PVOID> pendingBreakpoints;
 	PVOID lastBreakpoint = nullptr;
 	bool continueTrap = false;
 
 	HANDLE startup(const wchar_t*);
-	void continueIf(states);
+	void continueIfAndRun(states);
 	
 	void continueCommand();
 	void runCommand();
