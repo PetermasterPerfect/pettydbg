@@ -16,13 +16,13 @@ int main() {
 	std::thread t1(task1);
 	while(1)
 	{
-		__asm( ".intel_syntax noprefix;\n\t"
-			"pushf\n\t"
-			"pop r15\n\t"
-			"or r15, 0x100\n\t"
-			"push r15\n\t"
-			"popf\n\t"
-			);
+		// __asm( ".intel_syntax noprefix;\n\t"
+		// 	"pushf\n\t"
+		// 	"pop r15\n\t"
+		// 	"or r15, 0x100\n\t"
+		// 	"push r15\n\t"
+		// 	"popf\n\t"
+		// 	);
 		__asm("int3");
 		__asm("pop rax");
 		b-=2;

@@ -120,7 +120,7 @@ void Debugger::handleCmd() // TODO: almost everything in this function
 		else if(arguments[0] == "run") // restart
 			runCommand();
 		else if(arguments[0] == "thinfo")
-			enumerateThreadsCommand();		
+			enumerateThreadsCommand();
 		else if(arguments[0] == "m")
 			sketchMemoryTest();	
 		else if(arguments[0] == "mem")
@@ -161,9 +161,6 @@ void Debugger::handleCmd() // TODO: almost everything in this function
 
 void Debugger::exceptionSwitchedCased()
 {
-	// if(state == not_running)
-	// 	return;
-	// debuggerMessage("State ", state);
 	switch(debugEvent.dwDebugEventCode)
 	{
 		//TODO: first chance exception
@@ -174,15 +171,13 @@ void Debugger::exceptionSwitchedCased()
 			{
 				case STATUS_BREAKPOINT:
 				{
-					debuggerMessage("STATUS_BREAKPOINT");
 					if(firstBreakpoint)
 					{
-						for(auto breakpoint : breakpoints)
-						{
-							PVOID buf = breakpoint.first;
-							breakpoints.erase(buf);
-							setBreakPoint(buf);
-						}
+						std::map<PVOID, BYTE> buf(breakpoints);
+						breakpoints.clear();
+						for(auto breakpoint : buf)
+							setBreakPoint(breakpoint.first);
+
 						firstBreakpoint = false;
 					}
 					PVOID breakAddr = exception.ExceptionRecord.ExceptionAddress;
@@ -194,14 +189,14 @@ void Debugger::exceptionSwitchedCased()
 
 						if(!GetThreadContext(hT, &ctx))
 						{
-							debuggerMessage("GetThreadContext failed ", GetLastError());
+							debuggerMessage("sw GetThreadContext failed ", GetLastError());
 							return;
 						}
 						ctx.Rip = (SIZE_T)breakAddr;
 
 						if(!SetThreadContext(hT, &ctx))
 						{
-							debuggerMessage("GetThreadContext failed ", GetLastError());
+							debuggerMessage("sw SetThreadContext failed ", GetLastError());
 							return;
 						}
 					}
@@ -284,10 +279,6 @@ void Debugger::exceptionSwitchedCased()
 			ripEvent();
 			continueIfAndRun(running);
 			break;
-		}			
-		default:
-		{
-			//printf("default %x, %x:\n", debugEvent.dwDebugEventCode, debugEvent.u.Exception.ExceptionRecord.ExceptionCode);
 		}
 	}
 }
@@ -334,15 +325,12 @@ void Debugger::showStack(SIZE_T sz)
 	if(stackToView == nullptr)
 		return;
 
-	
 	if(!ReadProcessMemory(hProcess, stackAddr, stackToView, sizeof(PVOID)*sz, NULL))
 	{
 		debuggerMessage("showstack ReadProcessMemory %l", GetLastError());
 		delete[] stackToView;
 		return;
 	}
-	
-
 
 	for(SIZE_T i=0; i<sz; i++)
 		debuggerMessage((PVOID)((SIZE_T)stackAddr+sizeof(SIZE_T)*i), "\t", stackToView[i]);
@@ -400,7 +388,7 @@ void Debugger::dissassembly(PVOID addr, SIZE_T sz)
 			printf("%p ", insn[j].address);
 			for(int i=0; i<insn[j].size; i++)
 				printf("%x", insn[j].bytes[i]);
-			printf(" %s\t%s\n", insn[j].mnemonic, insn[j].op_str);
+			printf("\t%s %s\n", insn[j].mnemonic, insn[j].op_str);
 		}
 
 		cs_free(insn, count);
@@ -493,11 +481,11 @@ void Debugger::runCommand()
 		TerminateProcess(hProcess, 33);
 		WaitForSingleObject(hProcess, 100);
 
+		activeThreads.clear();
 		hProcess = startup(cmd.actualString.Buffer);
 		state = not_running;
 		firstBreakpoint = true;
 		lastBreakpoint = nullptr;
-		activeThreads.clear();
 		delete procParams;
 	}
 }
