@@ -116,19 +116,15 @@ void Debugger::handleCmd() // TODO: almost everything in this function
 	if(cmdToHandle && arguments.size() >= 1)
 	{
 		if(arguments[0] == "c")
-			continueCommand();
+			continueExecution();
 		else if(arguments[0] == "run") // restart
-			runCommand();
+			run();
 		else if(arguments[0] == "thinfo")
-			enumerateThreadsCommand();
-		else if(arguments[0] == "m")
-			sketchMemoryTest();	
-		else if(arguments[0] == "mem")
-			enumerateMemoryPagesCommand();
-		// else if(arguments[0] == "systembp")
-		// 	setSystemBreakpoint();
+			threadsInfo();
+		else if(arguments[0] == "meminfo")
+			memoryMappingInfo();
 		else if(arguments[0] == "n") // single step (no differentiation between step in and step over yet)
-			singleStepCommand();
+			singleStep();
 		else if(arguments[0] == "reg")
 			showGeneralPurposeRegisters();
 		else if(arguments[0] == "stack")
@@ -144,7 +140,16 @@ void Debugger::handleCmd() // TODO: almost everything in this function
 				debuggerMessage("Bad syntax!!!");
 			else	
 				setBreakPoint((PVOID)fromHex(argumentAsHex(arguments[1])));
+		}		
+		else if(arguments[0] == "delbp") // deleting a breakpoint
+		{
+			if(arguments.size() != 2)
+				debuggerMessage("Bad syntax!!!");
+			else	
+				deleteBreakpoint((PVOID)fromHex(argumentAsHex(arguments[1])));
 		}
+		else if(arguments[0] == "bpinfo")
+			breakpointsInfo();
 		else if(arguments[0] == "dis")
 		{
 			if(arguments.size() != 3)
@@ -215,7 +220,7 @@ void Debugger::exceptionSwitchedCased()
 						{
 							unsetTrapFlag();
 							continueTrap = false;
-							continueCommand();
+							continueExecution();
 							return;
 						}
 					}
@@ -399,7 +404,7 @@ void Debugger::dissassembly(PVOID addr, SIZE_T sz)
 	delete[] buf;
 }
 
-void Debugger::singleStepCommand()
+void Debugger::singleStep()
 {
 	// EXCEPTION_DEBUG_INFO& exception = debugEvent.u.Exception;
 	// if(exception.ExceptionRecord.ExceptionCode != STATUS_BREAKPOINT)
@@ -448,7 +453,7 @@ void Debugger::setBreakPoint(PVOID breakAddr)
 }
 
 
-void Debugger::continueCommand()
+void Debugger::continueExecution()
 {
 	if(lastBreakpoint != nullptr)
 	{
@@ -461,7 +466,7 @@ void Debugger::continueCommand()
 
 
 //TODO: implement changing directory when restarting debuggee
-void Debugger::runCommand()
+void Debugger::run()
 {
 	if(state == not_running)
 	{
@@ -495,14 +500,14 @@ void Debugger::breakSignal()
 	DebugBreakProcess(hProcess);
 }
 
-void Debugger::enumerateThreadsCommand()
+void Debugger::threadsInfo()
 {
 	for(auto idHandle : activeThreads)
 		debuggerMessage("Thread - ", idHandle.first);
 }
 
 
-void Debugger::enumerateMemoryPagesCommand()
+void Debugger::memoryMappingInfo()
 {
 	/*
 	print process memory map page by page
@@ -920,7 +925,6 @@ void Debugger::setTrapFlag()
 	HANDLE hT = activeThreads[debugEvent.dwThreadId];
 	CONTEXT ctx;
 	ctx.ContextFlags = CONTEXT_CONTROL;
-
 	
 	if(!GetThreadContext(hT, &ctx))
 	{
@@ -957,4 +961,36 @@ void Debugger::unsetTrapFlag()
 		debuggerMessage("GetThreadContext failed ", GetLastError());
 		return;
 	}
+}
+
+void Debugger::breakpointsInfo()
+{
+	if(breakpoints.empty())
+	{
+		debuggerMessage("No set breakpoint");
+		return;
+	}
+	for(auto bp : breakpoints)
+		debuggerMessage("Breakpoint at ", bp.first);
+}
+
+void Debugger::deleteBreakpoint(PVOID addr)
+{
+	if(breakpoints.empty())
+	{
+		debuggerMessage("No set breakpoint");
+		return;
+	}
+	if(breakpoints.find(addr) == breakpoints.end())
+	{
+		debuggerMessage("Not breakpoint at address ", addr);
+		return;
+	}
+
+	if(!WriteProcessMemory(hProcess, addr, &breakpoints[addr], sizeof(BYTE), NULL))
+	{
+		debuggerMessage("deleteBreakpoint WriteProcessMemory failed ", GetLastError());
+		return;
+	}
+	breakpoints.erase(addr);
 }

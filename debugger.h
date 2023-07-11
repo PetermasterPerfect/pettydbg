@@ -46,11 +46,11 @@ private:
 	HANDLE startup(const wchar_t*);
 	void continueIfAndRun(states);
 	
-	void continueCommand();
-	void runCommand();
+	void continueExecution();
+	void run();
 	void breakSignal();
-	void enumerateThreadsCommand();
-	void enumerateMemoryPagesCommand();
+	void threadsInfo();
+	void memoryMappingInfo();
 	
 	template<class... Args> void debuggerMessage(Args ...);
 	template <typename T> std::string asHex(T);
@@ -83,14 +83,14 @@ private:
 	void cmdtest();
 	void sketchMemoryTest();
 	
-
 	void dissassembly(PVOID, SIZE_T);
 	void setBreakPoint(PVOID);
-	void singleStepCommand();
+	void singleStep();
 	void setSystemBreakpoint();
 	void setTrapFlag();
 	void unsetTrapFlag();
 	void showStack(SIZE_T);
 	void showGeneralPurposeRegisters();
-
+	void breakpointsInfo();
+	void deleteBreakpoint(PVOID);
 };
