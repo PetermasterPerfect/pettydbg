@@ -123,8 +123,10 @@ void Debugger::handleCmd() // TODO: almost everything in this function
 			threadsInfo();
 		else if(arguments[0] == "meminfo")
 			memoryMappingInfo();
-		else if(arguments[0] == "n") // single step (no differentiation between step in and step over yet)
-			singleStep();
+		else if(arguments[0] == "n")
+			stepOver();		
+		else if(arguments[0] == "s")
+			stepIn();
 		else if(arguments[0] == "reg")
 			showGeneralPurposeRegisters();
 		else if(arguments[0] == "stack")
@@ -404,10 +406,47 @@ void Debugger::dissassembly(PVOID addr, SIZE_T sz)
 	delete[] buf;
 }
 
-void Debugger::singleStep()
+void Debugger::stepOver()
 {
-	// EXCEPTION_DEBUG_INFO& exception = debugEvent.u.Exception;
-	// if(exception.ExceptionRecord.ExceptionCode != STATUS_BREAKPOINT)
+
+	EXCEPTION_RECORD *exceptionRecord = &debugEvent.u.Exception.ExceptionRecord;
+	PVOID addr = exceptionRecord->ExceptionAddress;
+	csh handle;
+	cs_insn *insn;
+	size_t count;
+	BYTE buf[30]; // x86(x64) opcode is at most 15 bytes long
+
+	if (cs_open(CS_ARCH_X86, CS_MODE_64, &handle) != CS_ERR_OK)
+		return ;
+
+	if(!ReadProcessMemory(hProcess, addr, buf, 30, NULL))
+	{
+		debuggerMessage("singleStep ReadProcessMemory failed ", GetLastError());
+		return;
+	}
+
+	count = cs_disasm(handle, (const uint8_t*)buf, 30, (uint64_t)addr, 0, &insn);
+	if (count > 0)
+	{
+		if(!strcmp(insn[0].mnemonic, "call"))
+		{
+			PVOID bpBuf = (PVOID)insn[1].address;
+			setBreakPoint(bpBuf); // TODO: delete this breakpoint
+			continueExecution();
+			cs_free(insn, count);
+			return;
+		}
+		cs_free(insn, count);
+	} else
+		printf("ERROR: Failed to disassemble given code!\n");
+
+	cs_close(&handle);
+	setTrapFlag();
+	ContinueDebugEvent(debugEvent.dwProcessId, debugEvent.dwThreadId, DBG_CONTINUE);
+}
+
+void Debugger::stepIn()
+{
 	setTrapFlag();
 	ContinueDebugEvent(debugEvent.dwProcessId, debugEvent.dwThreadId, DBG_CONTINUE);
 }
@@ -506,7 +545,6 @@ void Debugger::threadsInfo()
 		debuggerMessage("Thread - ", idHandle.first);
 }
 
-
 void Debugger::memoryMappingInfo()
 {
 	/*
@@ -537,7 +575,6 @@ std::map<PVOID, std::string> Debugger::sketchMemory()
 	LIST_ENTRY buf, end;
 	std::map<PVOID, std::string> memorySketch;
 	std::map<PVOID, std::string> threadsMem;
-	//std::vector<std::map<PVOID, std::string>> sectionsMem;
 	SIZE_T pebAddr;
 
 	// obtaining addresses of loaded modules;
@@ -577,9 +614,6 @@ std::map<PVOID, std::string> Debugger::sketchMemory()
 			memorySketch[moduleInfo.BaseAddress] += fullModuleName.toString();
 		else
 			memorySketch[moduleInfo.BaseAddress] = fullModuleName.toString();
-
-		//sectionsMem.push_back(sketchModulesSections(moduleInfo.BaseAddress, fullModuleName.toString()));
-		//memorySketch.insert(sectionsMem[sectionsMem.size()-1].begin(), sectionsMem[sectionsMem.size()-1].end());
 
 		if(!ReadProcessMemory(hProcess, buf.Flink, &buf, sizeof(LIST_ENTRY), NULL))
 		{
@@ -626,7 +660,6 @@ std::map<PVOID, std::string> Debugger::sketchThreadMemory()
 		debuggerMessage("getNtQueryInformationThread failed ", asHex(GetLastError()));
 		return threadMemorySketch;
 	}
-
 
 	for(auto idHandle : activeThreads)
 	{
@@ -707,7 +740,6 @@ void Debugger::exceptionEvent()
 	PVOID addr = exceptionRecord->ExceptionAddress;
 	state = bpoint;
 
-	//if(0)
 	if(breakpoints.find(addr) != breakpoints.end())
 	{
 		if(WriteProcessMemory(hProcess, addr, &breakpoints[addr], sizeof(BYTE), NULL))

@@ -12,7 +12,7 @@ VERY IMPORTANT
 	MUST BE QUOTED !!!
 	It could be double, triple  quoted etc.
 	(e.g """app.exe""" runs correctly) so 
-	if user gives as an input cmd, it should be make sure its quoted 
+	if user gives as an argument cmd, it should be make sure its quoted 
 ***
 */
 

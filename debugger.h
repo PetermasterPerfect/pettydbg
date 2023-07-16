@@ -85,7 +85,8 @@ private:
 	
 	void dissassembly(PVOID, SIZE_T);
 	void setBreakPoint(PVOID);
-	void singleStep();
+	void stepOver();
+	void stepIn();
 	void setSystemBreakpoint();
 	void setTrapFlag();
 	void unsetTrapFlag();
