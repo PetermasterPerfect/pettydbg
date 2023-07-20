@@ -40,6 +40,7 @@ private:
 	// https://github.com/x64dbg/TitanEngine
 	std::map<DWORD, HANDLE> activeThreads;
 	std::map<PVOID, BYTE> breakpoints;
+	PVOID stepBreakpoint = nullptr;
 	PVOID lastBreakpoint = nullptr;
 	bool continueTrap = false;
 
@@ -94,4 +95,5 @@ private:
 	void showGeneralPurposeRegisters();
 	void breakpointsInfo();
 	void deleteBreakpoint(PVOID);
+	void replaceInt3(PVOID, BYTE*, SIZE_T);
 };

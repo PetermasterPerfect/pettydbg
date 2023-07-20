@@ -208,6 +208,12 @@ void Debugger::exceptionSwitchedCased()
 						}
 					}
 
+					if(stepBreakpoint != nullptr)
+					{
+						deleteBreakpoint(stepBreakpoint);
+						stepBreakpoint = nullptr;
+					}
+
 					break;
 				}
 				case EXCEPTION_SINGLE_STEP:
@@ -387,6 +393,7 @@ void Debugger::dissassembly(PVOID addr, SIZE_T sz)
 		delete[] buf;
 		return;
 	}
+	replaceInt3(addr, buf, sz);
 
 	count = cs_disasm(handle, (const uint8_t*)buf, sz, (uint64_t)addr, 0, &insn);
 	if (count > 0) {
@@ -408,7 +415,6 @@ void Debugger::dissassembly(PVOID addr, SIZE_T sz)
 
 void Debugger::stepOver()
 {
-
 	EXCEPTION_RECORD *exceptionRecord = &debugEvent.u.Exception.ExceptionRecord;
 	PVOID addr = exceptionRecord->ExceptionAddress;
 	csh handle;
@@ -432,6 +438,7 @@ void Debugger::stepOver()
 		{
 			PVOID bpBuf = (PVOID)insn[1].address;
 			setBreakPoint(bpBuf); // TODO: delete this breakpoint
+			stepBreakpoint = bpBuf;
 			continueExecution();
 			cs_free(insn, count);
 			return;
@@ -1025,4 +1032,14 @@ void Debugger::deleteBreakpoint(PVOID addr)
 		return;
 	}
 	breakpoints.erase(addr);
+}
+
+VOID Debugger::replaceInt3(PVOID addr, BYTE *buf, SIZE_T sz)
+{
+	for(SIZE_T i=0; i<sz; i++)
+	{
+		PVOID iAddr = (PVOID)((SIZE_T)addr+i);
+		if(breakpoints.find(iAddr) != breakpoints.end())
+			buf[i] = breakpoints[iAddr];
+	}
 }
