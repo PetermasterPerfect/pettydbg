@@ -31,6 +31,7 @@ Debugger::Debugger(wchar_t *cmd)
 	printf("Running %ls with id %i\n", cmd, GetProcessId(hProcess));
 	firstBreakpoint = false;
 	state = not_running;
+	isAttached = false;
 	SetConsoleCtrlHandler(registerSignals, TRUE);
 	DebugSetProcessKillOnExit(TRUE);
 }
@@ -53,7 +54,9 @@ Debugger::Debugger(DWORD pid)
 	printf("Attaching to process with id %i\n", pid);
 	processId = pid;
 	firstBreakpoint = false;
-	state = bpoint;
+	state = running;
+	isAttached = true;
+	attachRunningThreads();
 	SetConsoleCtrlHandler(registerSignals, TRUE);
 	DebugSetProcessKillOnExit(TRUE);
 }
@@ -94,7 +97,10 @@ std::string Debugger::argumentAsHex(std::string arg)
 void Debugger::enterDebuggerLoop()
 {
 	memset(&debugEvent, 0, sizeof(DEBUG_EVENT));
-	if(WaitForDebugEvent(&debugEvent, 100) && debugEvent.dwDebugEventCode == CREATE_PROCESS_DEBUG_EVENT)
+	debuggerMessage("enterDebuggerLoop");
+	if(state == not_running && 
+		WaitForDebugEvent(&debugEvent, 50) && 
+		debugEvent.dwDebugEventCode == CREATE_PROCESS_DEBUG_EVENT)
 		continueIfAndRun(not_running);
 
 	while(true)
@@ -117,7 +123,7 @@ void Debugger::handleCmd() // TODO: almost everything in this function
 	{
 		if(arguments[0] == "c")
 			continueExecution();
-		else if(arguments[0] == "run") // restart
+		else if(arguments[0] == "r") // restart
 			run();
 		else if(arguments[0] == "thinfo")
 			threadsInfo();
@@ -126,7 +132,9 @@ void Debugger::handleCmd() // TODO: almost everything in this function
 		else if(arguments[0] == "n")
 			stepOver();		
 		else if(arguments[0] == "s")
-			stepIn();
+			stepIn();		
+		else if(arguments[0] == "f")
+			stepOut();
 		else if(arguments[0] == "reg")
 			showGeneralPurposeRegisters();
 		else if(arguments[0] == "stack")
@@ -170,7 +178,6 @@ void Debugger::exceptionSwitchedCased()
 {
 	switch(debugEvent.dwDebugEventCode)
 	{
-		//TODO: first chance exception
 		case EXCEPTION_DEBUG_EVENT:
 		{
 			EXCEPTION_DEBUG_INFO& exception = debugEvent.u.Exception;
@@ -190,7 +197,9 @@ void Debugger::exceptionSwitchedCased()
 					PVOID breakAddr = exception.ExceptionRecord.ExceptionAddress;
 					if(breakpoints.find(breakAddr) != breakpoints.end())
 					{
-						HANDLE hT = activeThreads[debugEvent.dwThreadId];
+						HANDLE hT = activeThreads[debugEvent.dwThreadId]; // TODO: what if hT is null
+						if(!hT)
+							debuggerMessage("ht ", GetLastError());
 						CONTEXT ctx;
 						ctx.ContextFlags = CONTEXT_CONTROL;
 
@@ -232,6 +241,11 @@ void Debugger::exceptionSwitchedCased()
 							return;
 						}
 					}
+					if(steppingOut)
+					{
+						stepOut();
+						return;
+					}
 					break;
 				}
 			}
@@ -251,6 +265,7 @@ void Debugger::exceptionSwitchedCased()
 		{
 			createProcessEvent();
 			continueIfAndRun(not_running);
+			continueIfAndRun(running); // in case of attaching debugger to running process
 			break;
 		}
 		
@@ -452,6 +467,55 @@ void Debugger::stepOver()
 	ContinueDebugEvent(debugEvent.dwProcessId, debugEvent.dwThreadId, DBG_CONTINUE);
 }
 
+void Debugger::stepOut()
+{
+	EXCEPTION_RECORD *exceptionRecord = &debugEvent.u.Exception.ExceptionRecord;
+	PVOID addr = exceptionRecord->ExceptionAddress;
+	csh handle;
+	cs_insn *insn;
+	size_t count;
+	BYTE buf[30]; // x86(x64) opcode is at most 15 bytes long
+
+	if (cs_open(CS_ARCH_X86, CS_MODE_64, &handle) != CS_ERR_OK)
+		return ;
+
+	if(!ReadProcessMemory(hProcess, addr, buf, 30, NULL))
+	{
+		debuggerMessage("singleStep ReadProcessMemory failed ", GetLastError());
+		return;
+	}
+
+	steppingOut = true;
+	count = cs_disasm(handle, (const uint8_t*)buf, 30, (uint64_t)addr, 0, &insn);
+	if (count > 0)
+	{
+		if(!strcmp(insn[0].mnemonic, "ret"))
+		{
+			cs_free(insn, count);
+			steppingOut = false;
+			setTrapFlag();
+			ContinueDebugEvent(debugEvent.dwProcessId, debugEvent.dwThreadId, DBG_CONTINUE);
+			return;
+		}
+		else if(!strcmp(insn[0].mnemonic, "call"))
+		{
+			PVOID bpBuf = (PVOID)insn[1].address;
+			setBreakPoint(bpBuf);
+			stepBreakpoint = bpBuf;
+			continueExecution();
+			cs_free(insn, count);
+			return;
+		}
+		cs_free(insn, count);
+	}
+	else
+		printf("ERROR: Failed to disassemble given code!\n");
+
+	cs_close(&handle);
+	setTrapFlag();
+	ContinueDebugEvent(debugEvent.dwProcessId, debugEvent.dwThreadId, DBG_CONTINUE);
+}
+
 void Debugger::stepIn()
 {
 	setTrapFlag();
@@ -514,6 +578,12 @@ void Debugger::continueExecution()
 //TODO: implement changing directory when restarting debuggee
 void Debugger::run()
 {
+	if(isAttached)
+	{
+		debuggerMessage("Cannot restart debuggee. Process wasnt created in debugger context(it was attached)");
+		return;
+	}
+
 	if(state == not_running)
 	{
 		ContinueDebugEvent(debugEvent.dwProcessId, debugEvent.dwThreadId, DBG_CONTINUE);
@@ -978,7 +1048,6 @@ void Debugger::setTrapFlag()
 		debuggerMessage("GetThreadContext failed ", GetLastError());
 		return;
 	}
-	
 }
 
 void Debugger::unsetTrapFlag()
@@ -1034,7 +1103,7 @@ void Debugger::deleteBreakpoint(PVOID addr)
 	breakpoints.erase(addr);
 }
 
-VOID Debugger::replaceInt3(PVOID addr, BYTE *buf, SIZE_T sz)
+void Debugger::replaceInt3(PVOID addr, BYTE *buf, SIZE_T sz)
 {
 	for(SIZE_T i=0; i<sz; i++)
 	{
@@ -1042,4 +1111,20 @@ VOID Debugger::replaceInt3(PVOID addr, BYTE *buf, SIZE_T sz)
 		if(breakpoints.find(iAddr) != breakpoints.end())
 			buf[i] = breakpoints[iAddr];
 	}
+}
+
+void Debugger::attachRunningThreads()
+{
+	HANDLE hSnap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, processId);
+	if(!hSnap)
+		return;
+	THREADENTRY32 info;
+	info.dwSize = sizeof(THREADENTRY32);
+	if(!Thread32First(hSnap, &info))
+		return;
+	do
+	{
+		if(info.th32OwnerProcessID == processId)
+			activeThreads[info.th32ThreadID] = OpenThread(THREAD_ALL_ACCESS, false, info.th32ThreadID);
+	}while(Thread32Next(hSnap, &info));
 }

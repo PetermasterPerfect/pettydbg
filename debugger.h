@@ -36,8 +36,8 @@ private:
 	states state;
 	bool isAttached;
 	bool isRunning;
-	bool firstBreakpoint; // inspiration from TitanEngine
-	// https://github.com/x64dbg/TitanEngine
+	bool firstBreakpoint; // inspiration from https://github.com/x64dbg/TitanEngine
+	bool steppingOut = false;
 	std::map<DWORD, HANDLE> activeThreads;
 	std::map<PVOID, BYTE> breakpoints;
 	PVOID stepBreakpoint = nullptr;
@@ -46,7 +46,6 @@ private:
 
 	HANDLE startup(const wchar_t*);
 	void continueIfAndRun(states);
-	
 	void continueExecution();
 	void run();
 	void breakSignal();
@@ -88,6 +87,7 @@ private:
 	void setBreakPoint(PVOID);
 	void stepOver();
 	void stepIn();
+	void stepOut();
 	void setSystemBreakpoint();
 	void setTrapFlag();
 	void unsetTrapFlag();
@@ -96,4 +96,5 @@ private:
 	void breakpointsInfo();
 	void deleteBreakpoint(PVOID);
 	void replaceInt3(PVOID, BYTE*, SIZE_T);
+	void attachRunningThreads();
 };
