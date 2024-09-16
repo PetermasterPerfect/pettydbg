@@ -1,7 +1,7 @@
 // x86_64-w64-mingw32-g++ main.cpp debugger.cpp commandline.cpp splitstring.cpp -o dbg.exe -static -std=c++17
 #include <fstream>
 #include "main.h"
-//#define TEST 1
+#define TEST 1
 
 Debugger *dbg;
 

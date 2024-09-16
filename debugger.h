@@ -4,11 +4,13 @@
 #include <sstream>
 #include <map>
 #include <vector>
-#include <capstone/capstone.h>
+#include <memory>
 #include "commandline.h"
 #include "peb.h"
 #include "unicodeStringEx.h"
 #include "thread_info.h"
+#include <inttypes.h>
+#include <Zydis/Zydis.h>
 
 #define INT_1 0xCD01
 #define INT_3 0xCC
@@ -87,7 +89,7 @@ private:
 	void setBreakPoint(PVOID);
 	void stepOver();
 	void stepIn();
-	void stepOut();
+	//void stepOut();
 	void setSystemBreakpoint();
 	void setTrapFlag();
 	void unsetTrapFlag();

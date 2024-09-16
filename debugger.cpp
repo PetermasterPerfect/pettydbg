@@ -133,8 +133,8 @@ void Debugger::handleCmd() // TODO: almost everything in this function
 			stepOver();		
 		else if(arguments[0] == "s")
 			stepIn();		
-		else if(arguments[0] == "f")
-			stepOut();
+		//else if(arguments[0] == "f")
+		//	stepOut();
 		else if(arguments[0] == "reg")
 			showGeneralPurposeRegisters();
 		else if(arguments[0] == "stack")
@@ -243,7 +243,7 @@ void Debugger::exceptionSwitchedCased()
 					}
 					if(steppingOut)
 					{
-						stepOut();
+						//stepOut();
 						return;
 					}
 					break;
@@ -391,18 +391,10 @@ void Debugger::showGeneralPurposeRegisters()
 
 void Debugger::dissassembly(PVOID addr, SIZE_T sz)
 {
-
-	csh handle;
-	cs_insn *insn;
-	size_t count;
-
-	if (cs_open(CS_ARCH_X86, CS_MODE_64, &handle) != CS_ERR_OK)
-		return ;
-
-	BYTE *buf = new BYTE[sz];
-	if(buf == nullptr)
+	BYTE* buf = new BYTE[sz];
+	if (buf == nullptr)
 		return;
-	if(!ReadProcessMemory(hProcess, addr, buf, sz, NULL))
+	if (!ReadProcessMemory(hProcess, addr, buf, sz, NULL))
 	{
 		debuggerMessage("dissassembly ReadProcessMemory failed ", GetLastError());
 		delete[] buf;
@@ -410,63 +402,52 @@ void Debugger::dissassembly(PVOID addr, SIZE_T sz)
 	}
 	replaceInt3(addr, buf, sz);
 
-	count = cs_disasm(handle, (const uint8_t*)buf, sz, (uint64_t)addr, 0, &insn);
-	if (count > 0) {
-		size_t j;
-		for (j = 0; j < count; j++) {
-			printf("%p ", insn[j].address);
-			for(int i=0; i<insn[j].size; i++)
-				printf("%x", insn[j].bytes[i]);
-			printf("\t%s %s\n", insn[j].mnemonic, insn[j].op_str);
-		}
-
-		cs_free(insn, count);
-	} else
-		printf("ERROR: Failed to disassemble given code!\n");
-
-	cs_close(&handle);
+	// visualize relative addressing
+	ZyanU64 runtime_address = (ZyanU64)addr;
+	ZyanUSize offset = 0;
+	ZydisDisassembledInstruction instruction;
+	while (ZYAN_SUCCESS(ZydisDisassembleIntel(
+		/* machine_mode:    */ ZYDIS_MACHINE_MODE_LONG_64,
+		/* runtime_address: */ runtime_address,
+		/* buffer:          */ buf + offset,
+		/* length:          */ sz - offset,
+		/* instruction:     */ &instruction
+	))) {
+		printf("%016" PRIX64 "  %s\n", runtime_address, instruction.text);
+		offset += instruction.info.length;
+		runtime_address += instruction.info.length;
+	}
 	delete[] buf;
 }
 
 void Debugger::stepOver()
 {
-	EXCEPTION_RECORD *exceptionRecord = &debugEvent.u.Exception.ExceptionRecord;
+	EXCEPTION_RECORD* exceptionRecord = &debugEvent.u.Exception.ExceptionRecord;
 	PVOID addr = exceptionRecord->ExceptionAddress;
-	csh handle;
-	cs_insn *insn;
-	size_t count;
-	BYTE buf[30]; // x86(x64) opcode is at most 15 bytes long
-
-	if (cs_open(CS_ARCH_X86, CS_MODE_64, &handle) != CS_ERR_OK)
-		return ;
-
-	if(!ReadProcessMemory(hProcess, addr, buf, 30, NULL))
+	ZydisDecoder decoder;
+	ZydisDecoderInit(&decoder, ZYDIS_MACHINE_MODE_LONG_64, ZYDIS_STACK_WIDTH_64);
+	BYTE buf[30];
+	if (!ReadProcessMemory(hProcess, addr, buf, 30, NULL))
 	{
 		debuggerMessage("singleStep ReadProcessMemory failed ", GetLastError());
 		return;
 	}
 
-	count = cs_disasm(handle, (const uint8_t*)buf, 30, (uint64_t)addr, 0, &insn);
-	if (count > 0)
+	ZydisDecodedInstruction instruction;
+	ZydisDecoderDecodeInstruction(&decoder, 0, addr, 30,
+		&instruction);
+	if (instruction.mnemonic == ZYDIS_MNEMONIC_CALL)
 	{
-		if(!strcmp(insn[0].mnemonic, "call"))
-		{
-			PVOID bpBuf = (PVOID)insn[1].address;
-			setBreakPoint(bpBuf); // TODO: delete this breakpoint
-			stepBreakpoint = bpBuf;
-			continueExecution();
-			cs_free(insn, count);
-			return;
-		}
-		cs_free(insn, count);
-	} else
-		printf("ERROR: Failed to disassemble given code!\n");
-
-	cs_close(&handle);
+		PVOID bpBuf = addr;
+		setBreakPoint(bpBuf); // TODO: delete this breakpoint
+		stepBreakpoint = bpBuf;
+		continueExecution();
+	}
 	setTrapFlag();
 	ContinueDebugEvent(debugEvent.dwProcessId, debugEvent.dwThreadId, DBG_CONTINUE);
 }
 
+/*
 void Debugger::stepOut()
 {
 	EXCEPTION_RECORD *exceptionRecord = &debugEvent.u.Exception.ExceptionRecord;
@@ -514,7 +495,7 @@ void Debugger::stepOut()
 	cs_close(&handle);
 	setTrapFlag();
 	ContinueDebugEvent(debugEvent.dwProcessId, debugEvent.dwThreadId, DBG_CONTINUE);
-}
+}*/
 
 void Debugger::stepIn()
 {
