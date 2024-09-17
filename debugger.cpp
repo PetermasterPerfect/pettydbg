@@ -22,6 +22,10 @@ RET:
 	return TRUE;
 }
 
+Debugger::Debugger()
+{
+}
+
 Debugger::Debugger(wchar_t *cmd)
 {
 	hProcess = startup(cmd);
@@ -70,7 +74,7 @@ template<class... Args> void Debugger::debuggerMessage(Args... args)
 template <typename T> std::string Debugger::asHex(T num)
 {
 	std::stringstream sstream;
-	sstream << std::hex << num;
+	sstream << "0x" << std::hex << num;
 	return sstream.str();
 }
 
@@ -119,58 +123,65 @@ void Debugger::enterDebuggerLoop()
 
 void Debugger::handleCmd() // TODO: almost everything in this function
 {
-	if(cmdToHandle && arguments.size() >= 1)
+	try
 	{
-		if(arguments[0] == "c")
-			continueExecution();
-		else if(arguments[0] == "r") // restart
-			run();
-		else if(arguments[0] == "thinfo")
-			threadsInfo();
-		else if(arguments[0] == "meminfo")
-			memoryMappingInfo();
-		else if(arguments[0] == "n")
-			stepOver();		
-		else if(arguments[0] == "s")
-			stepIn();		
-		//else if(arguments[0] == "f")
-		//	stepOut();
-		else if(arguments[0] == "reg")
-			showGeneralPurposeRegisters();
-		else if(arguments[0] == "stack")
+		if (cmdToHandle && arguments.size() >= 1)
 		{
-			if(arguments.size() != 2)
-				debuggerMessage("Bad syntax!!!");
+			if (arguments[0] == "c")
+				continueExecution();
+			else if (arguments[0] == "r") // restart
+				run();
+			else if (arguments[0] == "thinfo")
+				threadsInfo();
+			else if (arguments[0] == "meminfo")
+				memoryMappingInfo();
+			else if (arguments[0] == "n")
+				stepOver();
+			else if (arguments[0] == "s")
+				stepIn();
+			//else if(arguments[0] == "f")
+			//	stepOut();
+			else if (arguments[0] == "reg")
+				showGeneralPurposeRegisters();
+			else if (arguments[0] == "stack")
+			{
+				if (arguments.size() != 2)
+					debuggerMessage("Bad syntax!!!");
+				else
+					showStack(stoi(arguments[1]));
+			}
+			else if (arguments[0] == "bp") // setting a breakpoint
+			{
+				if (arguments.size() != 2)
+					debuggerMessage("Bad syntax!!!");
+				else
+					setBreakPoint((PVOID)fromHex(argumentAsHex(arguments[1])));
+			}
+			else if (arguments[0] == "delbp") // deleting a breakpoint
+			{
+				if (arguments.size() != 2)
+					debuggerMessage("Bad syntax!!!");
+				else
+					deleteBreakpoint((PVOID)fromHex(argumentAsHex(arguments[1])));
+			}
+			else if (arguments[0] == "bpinfo")
+				breakpointsInfo();
+			else if (arguments[0] == "dis")
+			{
+				if (arguments.size() != 3)
+					debuggerMessage("Bad syntax!!!");
+				else
+					dissassembly((PVOID)fromHex(argumentAsHex(arguments[1])), stoi(arguments[2]));
+			}
 			else
-				showStack(stoi(arguments[1]));
+				debuggerMessage("Command isnt recognized");
+			arguments.clear();
+			cmdToHandle = false;
 		}
-		else if(arguments[0] == "bp") // setting a breakpoint
-		{
-			if(arguments.size() != 2)
-				debuggerMessage("Bad syntax!!!");
-			else	
-				setBreakPoint((PVOID)fromHex(argumentAsHex(arguments[1])));
-		}		
-		else if(arguments[0] == "delbp") // deleting a breakpoint
-		{
-			if(arguments.size() != 2)
-				debuggerMessage("Bad syntax!!!");
-			else	
-				deleteBreakpoint((PVOID)fromHex(argumentAsHex(arguments[1])));
-		}
-		else if(arguments[0] == "bpinfo")
-			breakpointsInfo();
-		else if(arguments[0] == "dis")
-		{
-			if(arguments.size() != 3)
-				debuggerMessage("Bad syntax!!!");
-			else
-				dissassembly((PVOID)fromHex(argumentAsHex(arguments[1])), stoi(arguments[2]));
-		}
-		else
-			debuggerMessage("Command isnt recognized");
-		arguments.clear();
-		cmdToHandle = false;
+	}
+	catch (const std::exception& e)
+	{
+		std::cout << e.what();
 	}
 }
 
@@ -337,10 +348,13 @@ void Debugger::setSystemBreakpoint()
 void Debugger::showStack(SIZE_T sz)
 {
 	PVOID stackAddr;
-	PVOID *stackToView;
+	std::unique_ptr<PVOID[]> stackToView(new PVOID[sz]);
 	HANDLE hT = activeThreads[debugEvent.dwThreadId];
 	CONTEXT ctx;
 	ctx.ContextFlags = CONTEXT_ALL;
+
+	if (stackToView == nullptr)
+		return;
 
 	if(!GetThreadContext(hT, &ctx))
 	{
@@ -349,21 +363,15 @@ void Debugger::showStack(SIZE_T sz)
 	}
 
 	stackAddr = (PVOID)ctx.Rsp;
-	stackToView = new PVOID[sz];
-	if(stackToView == nullptr)
-		return;
 
-	if(!ReadProcessMemory(hProcess, stackAddr, stackToView, sizeof(PVOID)*sz, NULL))
+	if(!ReadProcessMemory(hProcess, stackAddr, stackToView.get(), sizeof(PVOID) * sz, NULL))
 	{
 		debuggerMessage("showstack ReadProcessMemory %l", GetLastError());
-		delete[] stackToView;
 		return;
 	}
 
 	for(SIZE_T i=0; i<sz; i++)
 		debuggerMessage((PVOID)((SIZE_T)stackAddr+sizeof(SIZE_T)*i), "\t", stackToView[i]);
-
-	delete[] stackToView;
 }
 
 void Debugger::showGeneralPurposeRegisters()
@@ -391,16 +399,15 @@ void Debugger::showGeneralPurposeRegisters()
 
 void Debugger::dissassembly(PVOID addr, SIZE_T sz)
 {
-	BYTE* buf = new BYTE[sz];
+	std::unique_ptr<BYTE[]> buf(new BYTE[sz]);
 	if (buf == nullptr)
 		return;
-	if (!ReadProcessMemory(hProcess, addr, buf, sz, NULL))
+	if (!ReadProcessMemory(hProcess, addr, buf.get(), sz, NULL))
 	{
 		debuggerMessage("dissassembly ReadProcessMemory failed ", GetLastError());
-		delete[] buf;
 		return;
 	}
-	replaceInt3(addr, buf, sz);
+	replaceInt3(addr, buf.get(), sz);
 
 	// visualize relative addressing
 	ZyanU64 runtime_address = (ZyanU64)addr;
@@ -409,7 +416,7 @@ void Debugger::dissassembly(PVOID addr, SIZE_T sz)
 	while (ZYAN_SUCCESS(ZydisDisassembleIntel(
 		/* machine_mode:    */ ZYDIS_MACHINE_MODE_LONG_64,
 		/* runtime_address: */ runtime_address,
-		/* buffer:          */ buf + offset,
+		/* buffer:          */ buf.get() + offset,
 		/* length:          */ sz - offset,
 		/* instruction:     */ &instruction
 	))) {
@@ -417,7 +424,6 @@ void Debugger::dissassembly(PVOID addr, SIZE_T sz)
 		offset += instruction.info.length;
 		runtime_address += instruction.info.length;
 	}
-	delete[] buf;
 }
 
 void Debugger::stepOver()
@@ -572,7 +578,7 @@ void Debugger::run()
 	}
 	else
 	{
-		PRTL_USER_PROCESS_PARAMETERS procParams = loadProcessParameters();
+		std::unique_ptr <RTL_USER_PROCESS_PARAMETERS> procParams = loadProcessParameters();
 		if(procParams == nullptr)
 			return;
 
@@ -588,7 +594,6 @@ void Debugger::run()
 		state = not_running;
 		firstBreakpoint = true;
 		lastBreakpoint = nullptr;
-		delete procParams;
 	}
 }
 
@@ -619,7 +624,7 @@ void Debugger::memoryMappingInfo()
 	while (VirtualQueryEx(hProcess, (LPCVOID)startAddr, &memInfo, sizeof(MEMORY_BASIC_INFORMATION)))
 	{
 		std::stringstream descStream;
-		descStream << asHex(memInfo.BaseAddress) << "\t" << asHex(memInfo.RegionSize) << "\t" << memStateAsString(memInfo.State) << "\t" << memTypeAsString(memInfo.Type);
+		descStream << asHex(memInfo.BaseAddress) << "\t" << std::setw(16) << asHex(memInfo.RegionSize) << "\t" << memStateAsString(memInfo.State) << "\t" << memTypeAsString(memInfo.Type);
 		if(memoryDescription.find(memInfo.BaseAddress) != memoryDescription.end())
 			descStream << "\t" << memoryDescription[memInfo.BaseAddress];
 		debuggerMessage(descStream.str());
@@ -629,23 +634,23 @@ void Debugger::memoryMappingInfo()
 
 std::map<PVOID, std::string> Debugger::sketchMemory()
 {
-	PVOID *heaps;
 	LIST_ENTRY buf, end;
 	std::map<PVOID, std::string> memorySketch;
 	std::map<PVOID, std::string> threadsMem;
 	SIZE_T pebAddr;
 
 	// obtaining addresses of loaded modules;
-	PPEB peb = loadPeb(&pebAddr);
-	if(peb == nullptr)
-		return memorySketch;
+	std::unique_ptr<PEB> peb = loadPeb(&pebAddr);
+	if (peb == nullptr)
+		throw std::runtime_error("Cannot sketch process memory\n");
 
-	PPEB_LDR_DATA loaderData = loadLoaderData();
+	std::unique_ptr<PVOID[]> heaps(new PVOID[peb->NumberOfHeaps]);
+	if (heaps == nullptr)
+		throw std::runtime_error("Cannot sketch process memory\n");
+
+	std::unique_ptr<PEB_LDR_DATA> loaderData = loadLoaderData();
 	if(loaderData == nullptr)
-	{
-		delete peb;
-		return memorySketch;
-	}
+		throw std::runtime_error("Cannot sketch process memory\n");
 
 	memorySketch[peb->ImageBaseAddress]  = "Image base ";
 	memorySketch[(PVOID)pebAddr]  = "Peb";
@@ -653,7 +658,7 @@ std::map<PVOID, std::string> Debugger::sketchMemory()
 	if(!ReadProcessMemory(hProcess, loaderData->InLoadOrderModuleList.Flink, &end, sizeof(LIST_ENTRY), NULL))
 	{
 		debuggerMessage("LIST_ENTRY1 ReadProcessMemory failed ", GetLastError());
-		goto EXIT;
+		throw std::runtime_error("Cannot sketch process memory\n");
 	}
 
 	do
@@ -663,7 +668,7 @@ std::map<PVOID, std::string> Debugger::sketchMemory()
 		if(!ReadProcessMemory(hProcess, moduleInfoAddress, &moduleInfo, sizeof(LDR_MODULE), NULL))
 		{
 			debuggerMessage("LDR_MODULE ReadProcessMemory failed ", GetLastError());
-			goto EXIT;
+			throw std::runtime_error("Cannot sketch process memory\n");
 		}
 		UnicodeStringEx baseModuleName(hProcess, &moduleInfo.BaseDllName);
 		UnicodeStringEx fullModuleName(hProcess, &moduleInfo.FullDllName);
@@ -676,20 +681,16 @@ std::map<PVOID, std::string> Debugger::sketchMemory()
 		if(!ReadProcessMemory(hProcess, buf.Flink, &buf, sizeof(LIST_ENTRY), NULL))
 		{
 			debuggerMessage("LIST_ENTRY2 ReadProcessMemory failed ", GetLastError());
-			goto EXIT;
+			throw std::runtime_error("Cannot sketch process memory\n");
 		}
 	}while(buf.Flink!=end.Blink);
 
 	// obtaining addresses of heaps
 
-	heaps = new PVOID[peb->NumberOfHeaps];
-	if(heaps == nullptr)
-		goto EXIT;
-
-	if (!ReadProcessMemory(hProcess, peb->ProcessHeaps, heaps, peb->NumberOfHeaps*sizeof(PVOID), NULL))
+	if (!ReadProcessMemory(hProcess, peb->ProcessHeaps, heaps.get(), peb->NumberOfHeaps * sizeof(PVOID), NULL))
 	{
 		debuggerMessage("heap ReadProcessMemory failed ", GetLastError());
-		goto EXIT1;
+		throw std::runtime_error("Cannot sketch process memory\n");
 	}
 
 	for(ULONG i=0; i<peb->NumberOfHeaps; i++)
@@ -699,12 +700,6 @@ std::map<PVOID, std::string> Debugger::sketchMemory()
 
 	threadsMem = sketchThreadMemory();
 	memorySketch.insert(threadsMem.begin(), threadsMem.end());
-
-EXIT1:
-	delete heaps;
-EXIT:
-	delete loaderData;
-	delete peb;
 	return memorySketch;
 }
 
@@ -915,15 +910,21 @@ NtQueryInformationThread Debugger::getNtQueryInformationThread()
 	return func;
 }
 
-PPEB Debugger::loadPeb(SIZE_T *addr) // loads peb data from debugged process to allocated(heap) buffer so later that memory should be realeased
+std::unique_ptr<PEB> Debugger::loadPeb(SIZE_T *addr)
 {
 	NTSTATUS status;
 	PROCESS_BASIC_INFORMATION procInfo;
 	ULONG ret;
 	NtQueryInformationProcess queryInfoProc = getNtQueryInformationProcess();
-	PPEB peb;
-	if(queryInfoProc == nullptr)
+	if (queryInfoProc == nullptr)
 		return nullptr;
+
+	std::unique_ptr<PEB> peb(new PEB);
+	if (peb == nullptr)
+	{
+		debuggerMessage("failed to allocate memory for peb");
+		return nullptr;
+	}
 
 	status = queryInfoProc(hProcess, ProcessBasicInformation, &procInfo, sizeof(PROCESS_BASIC_INFORMATION), &ret);
 	if(!NT_SUCCESS(status))
@@ -932,17 +933,10 @@ PPEB Debugger::loadPeb(SIZE_T *addr) // loads peb data from debugged process to 
 		return nullptr;
 	}
 
-	peb = new PEB;
-	if(peb == nullptr)
-	{
-		debuggerMessage("failed to allocate memory for peb");
-		return nullptr;
-	}
-
 	if(addr != nullptr)
 		*addr = (SIZE_T)procInfo.PebBaseAddress;
 
-	if(!ReadProcessMemory(hProcess, procInfo.PebBaseAddress, peb, sizeof(PEB), NULL))
+	if(!ReadProcessMemory(hProcess, procInfo.PebBaseAddress, peb.get(), sizeof(PEB), NULL))
 	{
 		debuggerMessage("loadPeb ReadProcessMemory failed ", GetLastError());
 		return nullptr;
@@ -950,41 +944,38 @@ PPEB Debugger::loadPeb(SIZE_T *addr) // loads peb data from debugged process to 
 	return peb;
 }
 
-PRTL_USER_PROCESS_PARAMETERS Debugger::loadProcessParameters()
+std::unique_ptr<RTL_USER_PROCESS_PARAMETERS> Debugger::loadProcessParameters()
 {
-	PRTL_USER_PROCESS_PARAMETERS procParams;
-	PPEB peb = loadPeb();
+	std::unique_ptr<RTL_USER_PROCESS_PARAMETERS> procParams(new RTL_USER_PROCESS_PARAMETERS);
+	if(procParams == nullptr)
+		return nullptr;
+
+	std::unique_ptr<PEB> peb = loadPeb();
 	if(peb == nullptr)
 		return nullptr;
 
-	procParams = new RTL_USER_PROCESS_PARAMETERS;
-	if(!ReadProcessMemory(hProcess, peb->ProcessParameters, procParams, sizeof(RTL_USER_PROCESS_PARAMETERS), NULL))
+	if(!ReadProcessMemory(hProcess, peb->ProcessParameters, procParams.get(), sizeof(RTL_USER_PROCESS_PARAMETERS), NULL))
 	{
 		debuggerMessage("loadProcessParameters ReadProcessMemory failed ", GetLastError());
-		delete peb;
 		return nullptr;
 	}
-
-	delete peb;
 	return procParams;
 }
 
-PPEB_LDR_DATA Debugger::loadLoaderData()
+std::unique_ptr<PEB_LDR_DATA> Debugger::loadLoaderData()
 {
-	PPEB_LDR_DATA loaderData;
-	PPEB peb = loadPeb();
+	std::unique_ptr <PEB_LDR_DATA> loaderData(new PEB_LDR_DATA);
+	if (loaderData == nullptr)
+		return nullptr;
+	std::unique_ptr<PEB> peb = loadPeb();
 	if(peb == nullptr)
 		return nullptr;
 
-	loaderData = new PEB_LDR_DATA;
-	if(!ReadProcessMemory(hProcess, peb->LoaderData, loaderData, sizeof(PEB_LDR_DATA), NULL))
+	if(!ReadProcessMemory(hProcess, peb->LoaderData, loaderData.get(), sizeof(PEB_LDR_DATA), NULL))
 	{
 		debuggerMessage("loadLoaderData ReadProcessMemory failed ", GetLastError());
-		delete peb;
 		return nullptr;
 	}
-
-	delete peb;
 	return loaderData;
 }
 

@@ -5,6 +5,8 @@
 #include <map>
 #include <vector>
 #include <memory>
+#include <stdexcept>
+#include <iomanip>
 #include "commandline.h"
 #include "peb.h"
 #include "unicodeStringEx.h"
@@ -76,13 +78,12 @@ private:
 	
 	NtQueryInformationProcess getNtQueryInformationProcess();
 	NtQueryInformationThread getNtQueryInformationThread();
-	PPEB loadPeb(SIZE_T* = nullptr);
-	PRTL_USER_PROCESS_PARAMETERS loadProcessParameters();
-	PPEB_LDR_DATA loadLoaderData();
+	std::unique_ptr<PEB> loadPeb(SIZE_T* = nullptr);
+	std::unique_ptr <RTL_USER_PROCESS_PARAMETERS> loadProcessParameters();
+	std::unique_ptr<PEB_LDR_DATA> loadLoaderData();
 	std::map<PVOID, std::string> sketchMemory();
 	std::map<PVOID, std::string> sketchThreadMemory();
 	std::map<PVOID, std::string> sketchModulesSections(PVOID, std::string);
-	void cmdtest();
 	void sketchMemoryTest();
 	
 	void dissassembly(PVOID, SIZE_T);
