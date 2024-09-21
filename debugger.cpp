@@ -16,7 +16,7 @@ BOOL WINAPI registerSignals(DWORD dwCtrlType)
 			goto KILL;
 	}
 KILL:
-	DebugActiveProcessStop(dbg->procInfo.dwProcessId);
+	DebugActiveProcessStop(dbg->processId);
 	ExitProcess(0xcc);
 RET:
 	return TRUE;
@@ -79,10 +79,9 @@ template <typename T> std::string Debugger::asHex(T num)
 }
 
 
-//https://stackoverflow.com/questions/1070497/c-convert-hex-string-to-signed-integer
-SIZE_T Debugger::fromHex(std::string str)
+size_t Debugger::fromHex(std::string str)
 {
-	SIZE_T x;
+	size_t x;
 	std::stringstream ss;
 	ss << std::hex << str;
 	ss >> x;
@@ -101,7 +100,6 @@ std::string Debugger::argumentAsHex(std::string arg)
 void Debugger::enterDebuggerLoop()
 {
 	memset(&debugEvent, 0, sizeof(DEBUG_EVENT));
-	debuggerMessage("enterDebuggerLoop");
 	if(state == not_running && 
 		WaitForDebugEvent(&debugEvent, 50) && 
 		debugEvent.dwDebugEventCode == CREATE_PROCESS_DEBUG_EVENT)
@@ -590,7 +588,7 @@ void Debugger::run()
 		WaitForSingleObject(hProcess, 100);
 
 		activeThreads.clear();
-		hProcess = startup(cmd.actualString.Buffer);
+		hProcess = startup(cmd.realUnicode.Buffer);
 		state = not_running;
 		firstBreakpoint = true;
 		lastBreakpoint = nullptr;
@@ -670,7 +668,6 @@ std::map<PVOID, std::string> Debugger::sketchMemory()
 			debuggerMessage("LDR_MODULE ReadProcessMemory failed ", GetLastError());
 			throw std::runtime_error("Cannot sketch process memory\n");
 		}
-		UnicodeStringEx baseModuleName(hProcess, &moduleInfo.BaseDllName);
 		UnicodeStringEx fullModuleName(hProcess, &moduleInfo.FullDllName);
 
 		if(moduleInfo.BaseAddress == peb->ImageBaseAddress) 
@@ -696,7 +693,7 @@ std::map<PVOID, std::string> Debugger::sketchMemory()
 	for(ULONG i=0; i<peb->NumberOfHeaps; i++)
 		memorySketch[heaps[i]] = "Heap";
 
-	// obtaing threads stuff (tebs, stacks)
+	// obtaining threads info (teb, stack)
 
 	threadsMem = sketchThreadMemory();
 	memorySketch.insert(threadsMem.begin(), threadsMem.end());
@@ -705,7 +702,6 @@ std::map<PVOID, std::string> Debugger::sketchMemory()
 
 std::map<PVOID, std::string> Debugger::sketchThreadMemory()
 {
-	debuggerMessage("sketchThreadMemory, current thread ", debugEvent.dwThreadId);
 	std::map<PVOID, std::string> threadMemorySketch;
 	NtQueryInformationThread queryThreadInfo = getNtQueryInformationThread();
 	if(queryThreadInfo == nullptr)
@@ -755,17 +751,16 @@ std::map<PVOID, std::string> Debugger::sketchModulesSections(PVOID base, std::st
 		return sectionsSkecth;
 	}
 
-	IMAGE_SECTION_HEADER *sectionsHeaders = new IMAGE_SECTION_HEADER[ntHeaders.FileHeader.NumberOfSections];
+	std::unique_ptr<IMAGE_SECTION_HEADER[]> sectionsHeaders(new IMAGE_SECTION_HEADER[ntHeaders.FileHeader.NumberOfSections]);
 	if(sectionsHeaders == nullptr)
 		return sectionsSkecth;
 
 	PVOID sectionsHeadersStart = (PVOID)((SIZE_T)base+dosHeader.e_lfanew+sizeof(IMAGE_NT_HEADERS));
 	debuggerMessage("sectionsHeadersStart", sectionsHeadersStart);
-	if(!ReadProcessMemory(hProcess, sectionsHeadersStart, sectionsHeaders, 
+	if(!ReadProcessMemory(hProcess, sectionsHeadersStart, sectionsHeaders.get(),
 			sizeof(IMAGE_SECTION_HEADER)*ntHeaders.FileHeader.NumberOfSections, NULL))
 	{
 		debuggerMessage("ReadProcessMemory sectionsHeaders ReadProcessMemory failed ", GetLastError());
-		delete sectionsHeaders;
 		return sectionsSkecth;
 	}
 
@@ -776,7 +771,6 @@ std::map<PVOID, std::string> Debugger::sketchModulesSections(PVOID base, std::st
 		sectionsSkecth[(PVOID)((SIZE_T)base+sectionsHeaders[i].VirtualAddress)] = fullModuleName;
 	}
 
-	delete sectionsHeaders;
 	return sectionsSkecth;
 }
 
@@ -791,7 +785,7 @@ void Debugger::exceptionEvent()
 {
 	EXCEPTION_RECORD *exceptionRecord = &debugEvent.u.Exception.ExceptionRecord;
 	PVOID addr = exceptionRecord->ExceptionAddress;
-	state = bpoint;
+	state = breakpoint;
 
 	if(breakpoints.find(addr) != breakpoints.end())
 	{
@@ -863,6 +857,7 @@ void Debugger::continueIfAndRun(states cond)
 HANDLE Debugger::startup(const wchar_t *cmdLine)
 {
     STARTUPINFOW si;
+	PROCESS_INFORMATION procInfo;
     bool creationResult;
 
     ZeroMemory(&si, sizeof(si));

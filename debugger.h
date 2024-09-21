@@ -17,7 +17,7 @@
 #define INT_1 0xCD01
 #define INT_3 0xCC
 
-enum states{not_running, running, bpoint};
+enum states{not_running, running, breakpoint};
 
 BOOL WINAPI registerSignals(DWORD);
 
@@ -34,7 +34,6 @@ public:
 private:
 	//TODO: clean up mess with process handle process id and PROCESS_INFORMATION structure
 	DEBUG_EVENT debugEvent;
-	PROCESS_INFORMATION procInfo;
 	DWORD processId;
 	HANDLE hProcess;
 	states state;
@@ -58,7 +57,7 @@ private:
 	
 	template<class... Args> void debuggerMessage(Args ...);
 	template <typename T> std::string asHex(T);
-	SIZE_T fromHex(std::string);
+	size_t fromHex(std::string);
 	std::string memStateAsString(DWORD);
 	std::string memTypeAsString(DWORD);
 	std::string argumentAsHex(std::string);
