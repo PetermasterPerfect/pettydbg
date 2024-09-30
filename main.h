@@ -1,10 +1,10 @@
-#include <cstdio>
+#pragma once
+#include "commandsEvalListener.h"
+#include "debugger.h"
 #include <string>
 #include <thread>
-#include "debugger.h"
-#include "commandline.h"
+
+
 
 #define ATTACH 0
 #define CREATE_PROCESS 1
-
-

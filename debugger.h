@@ -1,13 +1,13 @@
+#pragma once
+#include "commandline.h"
 #include <windows.h>
 #include <tlhelp32.h>
-#include <cstdio>
 #include <sstream>
 #include <map>
 #include <vector>
 #include <memory>
 #include <stdexcept>
 #include <iomanip>
-#include "commandline.h"
 #include "peb.h"
 #include "unicodeStringEx.h"
 #include "thread_info.h"
@@ -19,14 +19,21 @@
 
 enum states{not_running, running, breakpoint};
 
-BOOL WINAPI registerSignals(DWORD);
+struct SmartHandleDeleter
+{
+	BOOL operator()(HANDLE h) const {
+		CloseHandle(h);
+	}
+};
 
-class Debugger : public CommandLineInput
+using SmartHandle = std::unique_ptr<void, SmartHandleDeleter>;
+
+class DebuggerEngine : public CommandLineInput
 {
 public:
-	Debugger();
-	Debugger(wchar_t *);
-	Debugger(DWORD pid);
+	DebuggerEngine();
+	DebuggerEngine(wchar_t *);
+	DebuggerEngine(DWORD pid);
 
 	void enterDebuggerLoop();
 	friend BOOL WINAPI registerSignals(DWORD);
@@ -35,22 +42,21 @@ private:
 	//TODO: clean up mess with process handle process id and PROCESS_INFORMATION structure
 	DEBUG_EVENT debugEvent;
 	DWORD processId;
-	HANDLE hProcess;
+	SmartHandle hProcess;
 	states state;
 	bool isAttached;
 	bool isRunning;
 	bool firstBreakpoint; // inspiration from https://github.com/x64dbg/TitanEngine
 	bool steppingOut = false;
-	std::map<DWORD, HANDLE> activeThreads;
 	std::map<PVOID, BYTE> breakpoints;
 	PVOID stepBreakpoint = nullptr;
 	PVOID lastBreakpoint = nullptr;
 	bool continueTrap = false;
 
-	HANDLE startup(const wchar_t*);
-	void continueIfAndRun(states);
+	SmartHandle startup(const wchar_t*);
+	void continueIfState();
 	void continueExecution();
-	void run();
+	void restart();
 	void breakSignal();
 	void threadsInfo();
 	void memoryMappingInfo();
@@ -63,7 +69,7 @@ private:
 	std::string argumentAsHex(std::string);
 	
 	void handleCmd();
-	void exceptionSwitchedCased();
+	void handleEvent();
 	
 	void exceptionEvent();
 	void createThreadEvent();
@@ -90,7 +96,7 @@ private:
 	void stepOver();
 	void stepIn();
 	//void stepOut();
-	void setSystemBreakpoint();
+	void setSystemBreakpoint(); // TODO: used nowhere
 	void setTrapFlag();
 	void unsetTrapFlag();
 	void showStack(SIZE_T);
@@ -98,5 +104,5 @@ private:
 	void breakpointsInfo();
 	void deleteBreakpoint(PVOID);
 	void replaceInt3(PVOID, BYTE*, SIZE_T);
-	void attachRunningThreads();
+	std::map<DWORD, SmartHandle> listActiveThreads();
 };

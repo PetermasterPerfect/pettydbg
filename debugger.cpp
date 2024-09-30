@@ -1,77 +1,45 @@
 #include "debugger.h"
-extern Debugger *dbg;
 
-BOOL WINAPI registerSignals(DWORD dwCtrlType)
-{
-	if(dwCtrlType == CTRL_C_EVENT)
-		goto KILL;
-	else if (dwCtrlType == CTRL_BREAK_EVENT)
-	{
-		if(dbg->state == running)
-		{
-			dbg->breakSignal();
-			goto RET;
-		}
-		else
-			goto KILL;
-	}
-KILL:
-	DebugActiveProcessStop(dbg->processId);
-	ExitProcess(0xcc);
-RET:
-	return TRUE;
-}
-
-Debugger::Debugger()
+DebuggerEngine::DebuggerEngine()
 {
 }
 
-Debugger::Debugger(wchar_t *cmd)
+DebuggerEngine::DebuggerEngine(wchar_t *cmd)
 {
 	hProcess = startup(cmd);
 	if(hProcess == NULL)
 		fprintf(stderr, "startup failed [%lx]\n", GetLastError());
 
-	printf("Running %ls with id %i\n", cmd, GetProcessId(hProcess));
+	printf("Running %ls with id %i\n", cmd, GetProcessId(hProcess.get()));
 	firstBreakpoint = false;
 	state = not_running;
 	isAttached = false;
-	SetConsoleCtrlHandler(registerSignals, TRUE);
-	DebugSetProcessKillOnExit(TRUE);
+
 }
 
-Debugger::Debugger(DWORD pid)
+DebuggerEngine::DebuggerEngine(DWORD pid)
 {
-	hProcess = OpenProcess(PROCESS_ALL_ACCESS, FALSE, pid);
-	if(hProcess == NULL)
-	{
-		fprintf(stderr, "OpenProcess failed [%lx]\n", GetLastError());
-		return;
-	}
+	hProcess = SmartHandle(OpenProcess(PROCESS_ALL_ACCESS, FALSE, pid));
+	if (hProcess == NULL)
+		throw std::runtime_error("Cannot run process\n");
 
 	if(!DebugActiveProcess(pid))
-	{
-		fprintf(stderr, "DebugActiveProcess failed [%lx]\n", GetLastError());
-		return;
-	}
+		throw std::runtime_error("Cannot debug process\n");
 
-	printf("Attaching to process with id %i\n", pid);
+	debuggerMessage("Attaching to process with id ", pid);
 	processId = pid;
 	firstBreakpoint = false;
 	state = running;
 	isAttached = true;
-	attachRunningThreads();
-	SetConsoleCtrlHandler(registerSignals, TRUE);
-	DebugSetProcessKillOnExit(TRUE);
 }
 
-template<class... Args> void Debugger::debuggerMessage(Args... args)
+template<class... Args> void DebuggerEngine::debuggerMessage(Args... args)
 {
 	(std::cout << ... << args) << std::endl;
 }
 
 
-template <typename T> std::string Debugger::asHex(T num)
+template <typename T> std::string DebuggerEngine::asHex(T num)
 {
 	std::stringstream sstream;
 	sstream << "0x" << std::hex << num;
@@ -79,7 +47,7 @@ template <typename T> std::string Debugger::asHex(T num)
 }
 
 
-size_t Debugger::fromHex(std::string str)
+size_t DebuggerEngine::fromHex(std::string str)
 {
 	size_t x;
 	std::stringstream ss;
@@ -88,7 +56,7 @@ size_t Debugger::fromHex(std::string str)
 	return x;
 }
 
-std::string Debugger::argumentAsHex(std::string arg)
+std::string DebuggerEngine::argumentAsHex(std::string arg)
 {
 	std::string potentialAddr = arg;
 	if(potentialAddr.substr(0, 2) == "0x")
@@ -97,7 +65,7 @@ std::string Debugger::argumentAsHex(std::string arg)
 	return potentialAddr;
 }
 
-void Debugger::enterDebuggerLoop()
+void DebuggerEngine::enterDebuggerLoop()
 {
 	memset(&debugEvent, 0, sizeof(DEBUG_EVENT));
 	if(state == not_running && 
@@ -115,11 +83,11 @@ void Debugger::enterDebuggerLoop()
 		}
 		if(!WaitForDebugEvent(&debugEvent, 10))
 			continue;
-		exceptionSwitchedCased();
+		handleEvent();
 	}
 }
 
-void Debugger::handleCmd() // TODO: almost everything in this function
+void DebuggerEngine::handleCmd() // TODO: almost everything in this function
 {
 	try
 	{
@@ -128,7 +96,7 @@ void Debugger::handleCmd() // TODO: almost everything in this function
 			if (arguments[0] == "c")
 				continueExecution();
 			else if (arguments[0] == "r") // restart
-				run();
+				restart();
 			else if (arguments[0] == "thinfo")
 				threadsInfo();
 			else if (arguments[0] == "meminfo")
@@ -183,7 +151,7 @@ void Debugger::handleCmd() // TODO: almost everything in this function
 	}
 }
 
-void Debugger::exceptionSwitchedCased()
+void DebuggerEngine::handleEvent()
 {
 	switch(debugEvent.dwDebugEventCode)
 	{
@@ -206,20 +174,20 @@ void Debugger::exceptionSwitchedCased()
 					PVOID breakAddr = exception.ExceptionRecord.ExceptionAddress;
 					if(breakpoints.find(breakAddr) != breakpoints.end())
 					{
-						HANDLE hT = activeThreads[debugEvent.dwThreadId]; // TODO: what if hT is null
+						SmartHandle hT = std::move(listActiveThreads()[debugEvent.dwThreadId]); // TODO: what if hT is null
 						if(!hT)
 							debuggerMessage("ht ", GetLastError());
 						CONTEXT ctx;
 						ctx.ContextFlags = CONTEXT_CONTROL;
 
-						if(!GetThreadContext(hT, &ctx))
+						if(!GetThreadContext(hT.get(), &ctx))
 						{
 							debuggerMessage("sw GetThreadContext failed ", GetLastError());
 							return;
 						}
 						ctx.Rip = (SIZE_T)breakAddr;
 
-						if(!SetThreadContext(hT, &ctx))
+						if(!SetThreadContext(hT.get(), &ctx))
 						{
 							debuggerMessage("sw SetThreadContext failed ", GetLastError());
 							return;
@@ -239,7 +207,7 @@ void Debugger::exceptionSwitchedCased()
 					if(lastBreakpoint != nullptr)
 					{
 						BYTE int3 = 0xcc;
-						if(!WriteProcessMemory(hProcess, lastBreakpoint, &int3, sizeof(BYTE), NULL))
+						if(!WriteProcessMemory(hProcess.get(), lastBreakpoint, &int3, sizeof(BYTE), NULL))
 							debuggerMessage("EXCEPTION_SINGLE_STEP WriteProcessMemory failed ", GetLastError());
 						lastBreakpoint = nullptr;
 						if(continueTrap)
@@ -265,16 +233,14 @@ void Debugger::exceptionSwitchedCased()
 		case CREATE_THREAD_DEBUG_EVENT:
 		{
 			createThreadEvent();
-			continueIfAndRun(running);
-			//ContinueDebugEvent(debugEvent.dwProcessId, debugEvent.dwThreadId, DBG_CONTINUE);
+			/ContinueDebugEvent(debugEvent.dwProcessId, debugEvent.dwThreadId, DBG_CONTINUE);
 			break;
 		}
 		
 		case CREATE_PROCESS_DEBUG_EVENT:
 		{
 			createProcessEvent();
-			continueIfAndRun(not_running);
-			continueIfAndRun(running); // in case of attaching debugger to running process
+			ContinueDebugEvent(debugEvent.dwProcessId, debugEvent.dwThreadId, DBG_CONTINUE);
 			break;
 		}
 		
@@ -320,7 +286,7 @@ void Debugger::exceptionSwitchedCased()
 	}
 }
 
-void Debugger::setSystemBreakpoint()
+void DebuggerEngine::setSystemBreakpoint()
 {
 	if(state != not_running)
 	{
@@ -343,18 +309,18 @@ void Debugger::setSystemBreakpoint()
 
 }
 
-void Debugger::showStack(SIZE_T sz)
+void DebuggerEngine::showStack(SIZE_T sz)
 {
 	PVOID stackAddr;
 	std::unique_ptr<PVOID[]> stackToView(new PVOID[sz]);
-	HANDLE hT = activeThreads[debugEvent.dwThreadId];
+	SmartHandle hT = std::move(listActiveThreads()[debugEvent.dwThreadId]);
 	CONTEXT ctx;
 	ctx.ContextFlags = CONTEXT_ALL;
 
 	if (stackToView == nullptr)
 		return;
 
-	if(!GetThreadContext(hT, &ctx))
+	if(!GetThreadContext(hT.get(), &ctx))
 	{
 		debuggerMessage("GetThreadContext failed ", GetLastError());
 		return;
@@ -362,7 +328,7 @@ void Debugger::showStack(SIZE_T sz)
 
 	stackAddr = (PVOID)ctx.Rsp;
 
-	if(!ReadProcessMemory(hProcess, stackAddr, stackToView.get(), sizeof(PVOID) * sz, NULL))
+	if(!ReadProcessMemory(hProcess.get(), stackAddr, stackToView.get(), sizeof(PVOID) * sz, NULL))
 	{
 		debuggerMessage("showstack ReadProcessMemory %l", GetLastError());
 		return;
@@ -372,13 +338,13 @@ void Debugger::showStack(SIZE_T sz)
 		debuggerMessage((PVOID)((SIZE_T)stackAddr+sizeof(SIZE_T)*i), "\t", stackToView[i]);
 }
 
-void Debugger::showGeneralPurposeRegisters()
+void DebuggerEngine::showGeneralPurposeRegisters()
 {
-	HANDLE hT = activeThreads[debugEvent.dwThreadId];
+	SmartHandle hT = std::move(listActiveThreads()[debugEvent.dwThreadId]);
 	CONTEXT ctx;
 	ctx.ContextFlags = CONTEXT_ALL;
 
-	if(!GetThreadContext(hT, &ctx))
+	if(!GetThreadContext(hT.get(), &ctx))
 	{
 		debuggerMessage("GetThreadContext failed ", GetLastError());
 		return;
@@ -395,15 +361,16 @@ void Debugger::showGeneralPurposeRegisters()
 	debuggerMessage("Rip=", (PVOID)ctx.Rip);
 }
 
-void Debugger::dissassembly(PVOID addr, SIZE_T sz)
+void DebuggerEngine::dissassembly(PVOID addr, SIZE_T sz)
 {
 	std::unique_ptr<BYTE[]> buf(new BYTE[sz]);
 	if (buf == nullptr)
 		return;
-	if (!ReadProcessMemory(hProcess, addr, buf.get(), sz, NULL))
+	if (!ReadProcessMemory(hProcess.get(), addr, buf.get(), sz, NULL))
 	{
-		debuggerMessage("dissassembly ReadProcessMemory failed ", GetLastError());
-		return;
+		std::stringstream ss;
+		ss << addr << "\n";
+		throw std::runtime_error("Cannot access memory at address " + ss.str());
 	}
 	replaceInt3(addr, buf.get(), sz);
 
@@ -412,11 +379,11 @@ void Debugger::dissassembly(PVOID addr, SIZE_T sz)
 	ZyanUSize offset = 0;
 	ZydisDisassembledInstruction instruction;
 	while (ZYAN_SUCCESS(ZydisDisassembleIntel(
-		/* machine_mode:    */ ZYDIS_MACHINE_MODE_LONG_64,
-		/* runtime_address: */ runtime_address,
-		/* buffer:          */ buf.get() + offset,
-		/* length:          */ sz - offset,
-		/* instruction:     */ &instruction
+		 ZYDIS_MACHINE_MODE_LONG_64,
+		runtime_address,
+		buf.get() + offset,
+		sz - offset,
+		&instruction
 	))) {
 		printf("%016" PRIX64 "  %s\n", runtime_address, instruction.text);
 		offset += instruction.info.length;
@@ -424,14 +391,14 @@ void Debugger::dissassembly(PVOID addr, SIZE_T sz)
 	}
 }
 
-void Debugger::stepOver()
+void DebuggerEngine::stepOver()
 {
 	EXCEPTION_RECORD* exceptionRecord = &debugEvent.u.Exception.ExceptionRecord;
 	PVOID addr = exceptionRecord->ExceptionAddress;
 	ZydisDecoder decoder;
 	ZydisDecoderInit(&decoder, ZYDIS_MACHINE_MODE_LONG_64, ZYDIS_STACK_WIDTH_64);
 	BYTE buf[30];
-	if (!ReadProcessMemory(hProcess, addr, buf, 30, NULL))
+	if (!ReadProcessMemory(hProcess.get(), addr, buf, 30, NULL))
 	{
 		debuggerMessage("singleStep ReadProcessMemory failed ", GetLastError());
 		return;
@@ -452,7 +419,7 @@ void Debugger::stepOver()
 }
 
 /*
-void Debugger::stepOut()
+void DebuggerEngine::stepOut()
 {
 	EXCEPTION_RECORD *exceptionRecord = &debugEvent.u.Exception.ExceptionRecord;
 	PVOID addr = exceptionRecord->ExceptionAddress;
@@ -464,7 +431,7 @@ void Debugger::stepOut()
 	if (cs_open(CS_ARCH_X86, CS_MODE_64, &handle) != CS_ERR_OK)
 		return ;
 
-	if(!ReadProcessMemory(hProcess, addr, buf, 30, NULL))
+	if(!ReadProcessMemory(hProcess.get(), addr, buf, 30, NULL))
 	{
 		debuggerMessage("singleStep ReadProcessMemory failed ", GetLastError());
 		return;
@@ -499,15 +466,15 @@ void Debugger::stepOut()
 	cs_close(&handle);
 	setTrapFlag();
 	ContinueDebugEvent(debugEvent.dwProcessId, debugEvent.dwThreadId, DBG_CONTINUE);
-}*/
-
-void Debugger::stepIn()
+}
+*/
+void DebuggerEngine::stepIn()
 {
 	setTrapFlag();
 	ContinueDebugEvent(debugEvent.dwProcessId, debugEvent.dwThreadId, DBG_CONTINUE);
 }
 
-void Debugger::setBreakPoint(PVOID breakAddr)
+void DebuggerEngine::setBreakPoint(PVOID breakAddr)
 {
 	BYTE buf, int3;
 	MEMORY_BASIC_INFORMATION memInfo;
@@ -519,7 +486,7 @@ void Debugger::setBreakPoint(PVOID breakAddr)
 		return;
 	}
 
-	if(!VirtualQueryEx(hProcess, breakAddr, &memInfo, sizeof(MEMORY_BASIC_INFORMATION)))
+	if(!VirtualQueryEx(hProcess.get(), breakAddr, &memInfo, sizeof(MEMORY_BASIC_INFORMATION)))
 	{
 		debuggerMessage("setBreakPoint VirtualQueryEx failed ", GetLastError());
 		return;
@@ -531,7 +498,7 @@ void Debugger::setBreakPoint(PVOID breakAddr)
 		return;
 	}
 
-	if(!ReadProcessMemory(hProcess, breakAddr, &buf, sizeof(BYTE), NULL))
+	if(!ReadProcessMemory(hProcess.get(), breakAddr, &buf, sizeof(BYTE), NULL))
 	{
 		debuggerMessage("setBreakPoint ReadProcessMemory failed ", GetLastError());
 		return;
@@ -540,7 +507,7 @@ void Debugger::setBreakPoint(PVOID breakAddr)
 	breakpoints[breakAddr] = buf;
 	int3 = 0xcc;
 
-	if(!WriteProcessMemory(hProcess, breakAddr, &int3, sizeof(BYTE), NULL))
+	if(!WriteProcessMemory(hProcess.get(), breakAddr, &int3, sizeof(BYTE), NULL))
 	{
 		debuggerMessage("WriteProcessMemory ReadProcessMemory failed ", GetLastError());
 		return;
@@ -548,7 +515,7 @@ void Debugger::setBreakPoint(PVOID breakAddr)
 }
 
 
-void Debugger::continueExecution()
+void DebuggerEngine::continueExecution()
 {
 	if(lastBreakpoint != nullptr)
 	{
@@ -561,7 +528,7 @@ void Debugger::continueExecution()
 
 
 //TODO: implement changing directory when restarting debuggee
-void Debugger::run()
+void DebuggerEngine::restart()
 {
 	if(isAttached)
 	{
@@ -580,14 +547,13 @@ void Debugger::run()
 		if(procParams == nullptr)
 			return;
 
-		UnicodeStringEx cmd(hProcess, &procParams->CommandLine);
+		UnicodeStringEx cmd(hProcess.get(), &procParams->CommandLine);
 		// wchar_t cwdBuf[0x300];
-		// UnicodeStringEx cwd(hProcess, &procParams->CurrentDirectoryPath);
+		// UnicodeStringEx cwd(hProcess.get(), &procParams->CurrentDirectoryPath);
 
-		TerminateProcess(hProcess, 33);
-		WaitForSingleObject(hProcess, 100);
+		TerminateProcess(hProcess.get(), 33);
+		WaitForSingleObject(hProcess.get(), 100);
 
-		activeThreads.clear();
 		hProcess = startup(cmd.realUnicode.Buffer);
 		state = not_running;
 		firstBreakpoint = true;
@@ -595,18 +561,18 @@ void Debugger::run()
 	}
 }
 
-void Debugger::breakSignal()
+void DebuggerEngine::breakSignal()
 {
-	DebugBreakProcess(hProcess);
+	DebugBreakProcess(hProcess.get());
 }
 
-void Debugger::threadsInfo()
+void DebuggerEngine::threadsInfo()
 {
-	for(auto idHandle : activeThreads)
+	for(auto &idHandle : listActiveThreads())
 		debuggerMessage("Thread - ", idHandle.first);
 }
 
-void Debugger::memoryMappingInfo()
+void DebuggerEngine::memoryMappingInfo()
 {
 	/*
 	print process memory map page by page
@@ -619,7 +585,7 @@ void Debugger::memoryMappingInfo()
 	memset(&memInfo, 0, sizeof(MEMORY_BASIC_INFORMATION));
 	std::map<PVOID, std::string> memoryDescription = sketchMemory();
 
-	while (VirtualQueryEx(hProcess, (LPCVOID)startAddr, &memInfo, sizeof(MEMORY_BASIC_INFORMATION)))
+	while (VirtualQueryEx(hProcess.get(), (LPCVOID)startAddr, &memInfo, sizeof(MEMORY_BASIC_INFORMATION)))
 	{
 		std::stringstream descStream;
 		descStream << asHex(memInfo.BaseAddress) << "\t" << std::setw(16) << asHex(memInfo.RegionSize) << "\t" << memStateAsString(memInfo.State) << "\t" << memTypeAsString(memInfo.Type);
@@ -630,7 +596,7 @@ void Debugger::memoryMappingInfo()
 	}
 }
 
-std::map<PVOID, std::string> Debugger::sketchMemory()
+std::map<PVOID, std::string> DebuggerEngine::sketchMemory()
 {
 	LIST_ENTRY buf, end;
 	std::map<PVOID, std::string> memorySketch;
@@ -653,7 +619,7 @@ std::map<PVOID, std::string> Debugger::sketchMemory()
 	memorySketch[peb->ImageBaseAddress]  = "Image base ";
 	memorySketch[(PVOID)pebAddr]  = "Peb";
 	buf = loaderData->InLoadOrderModuleList;
-	if(!ReadProcessMemory(hProcess, loaderData->InLoadOrderModuleList.Flink, &end, sizeof(LIST_ENTRY), NULL))
+	if(!ReadProcessMemory(hProcess.get(), loaderData->InLoadOrderModuleList.Flink, &end, sizeof(LIST_ENTRY), NULL))
 	{
 		debuggerMessage("LIST_ENTRY1 ReadProcessMemory failed ", GetLastError());
 		throw std::runtime_error("Cannot sketch process memory\n");
@@ -663,19 +629,19 @@ std::map<PVOID, std::string> Debugger::sketchMemory()
 	{
 		LDR_MODULE moduleInfo;
 		PVOID moduleInfoAddress = CONTAINING_RECORD(buf.Flink, LDR_MODULE, InLoadOrderModuleList);
-		if(!ReadProcessMemory(hProcess, moduleInfoAddress, &moduleInfo, sizeof(LDR_MODULE), NULL))
+		if(!ReadProcessMemory(hProcess.get(), moduleInfoAddress, &moduleInfo, sizeof(LDR_MODULE), NULL))
 		{
 			debuggerMessage("LDR_MODULE ReadProcessMemory failed ", GetLastError());
 			throw std::runtime_error("Cannot sketch process memory\n");
 		}
-		UnicodeStringEx fullModuleName(hProcess, &moduleInfo.FullDllName);
+		UnicodeStringEx fullModuleName(hProcess.get(), &moduleInfo.FullDllName);
 
 		if(moduleInfo.BaseAddress == peb->ImageBaseAddress) 
 			memorySketch[moduleInfo.BaseAddress] += fullModuleName.toString();
 		else
 			memorySketch[moduleInfo.BaseAddress] = fullModuleName.toString();
 
-		if(!ReadProcessMemory(hProcess, buf.Flink, &buf, sizeof(LIST_ENTRY), NULL))
+		if(!ReadProcessMemory(hProcess.get(), buf.Flink, &buf, sizeof(LIST_ENTRY), NULL))
 		{
 			debuggerMessage("LIST_ENTRY2 ReadProcessMemory failed ", GetLastError());
 			throw std::runtime_error("Cannot sketch process memory\n");
@@ -684,7 +650,7 @@ std::map<PVOID, std::string> Debugger::sketchMemory()
 
 	// obtaining addresses of heaps
 
-	if (!ReadProcessMemory(hProcess, peb->ProcessHeaps, heaps.get(), peb->NumberOfHeaps * sizeof(PVOID), NULL))
+	if (!ReadProcessMemory(hProcess.get(), peb->ProcessHeaps, heaps.get(), peb->NumberOfHeaps * sizeof(PVOID), NULL))
 	{
 		debuggerMessage("heap ReadProcessMemory failed ", GetLastError());
 		throw std::runtime_error("Cannot sketch process memory\n");
@@ -700,7 +666,7 @@ std::map<PVOID, std::string> Debugger::sketchMemory()
 	return memorySketch;
 }
 
-std::map<PVOID, std::string> Debugger::sketchThreadMemory()
+std::map<PVOID, std::string> DebuggerEngine::sketchThreadMemory()
 {
 	std::map<PVOID, std::string> threadMemorySketch;
 	NtQueryInformationThread queryThreadInfo = getNtQueryInformationThread();
@@ -710,12 +676,12 @@ std::map<PVOID, std::string> Debugger::sketchThreadMemory()
 		return threadMemorySketch;
 	}
 
-	for(auto idHandle : activeThreads)
+	for(auto &idHandle : listActiveThreads())
 	{
 		TEB teb;
 		THREAD_BASIC_INFORMATION threadBasicInfo;
 		ULONG ret;
-		NTSTATUS status = queryThreadInfo(idHandle.second, ThreadBasicInformation, &threadBasicInfo, sizeof(THREAD_BASIC_INFORMATION), &ret);
+		NTSTATUS status = queryThreadInfo(idHandle.second.get(), ThreadBasicInformation, &threadBasicInfo, sizeof(THREAD_BASIC_INFORMATION), &ret);
 		if(!NT_SUCCESS(status))
 		{
 			debuggerMessage("queryThreadInfo failed ", asHex(status));
@@ -723,7 +689,7 @@ std::map<PVOID, std::string> Debugger::sketchThreadMemory()
 		}
 		threadMemorySketch[threadBasicInfo.TebBaseAddress] = std::string("Teb ")+std::to_string(idHandle.first); //TODO: add thread id to memory description;
 
-		if(!ReadProcessMemory(hProcess, threadBasicInfo.TebBaseAddress, &teb, sizeof(TEB), NULL))
+		if(!ReadProcessMemory(hProcess.get(), threadBasicInfo.TebBaseAddress, &teb, sizeof(TEB), NULL))
 		{
 			debuggerMessage("ReadProcessMemory TEB ReadProcessMemory failed ", GetLastError());
 			continue;
@@ -734,18 +700,18 @@ std::map<PVOID, std::string> Debugger::sketchThreadMemory()
 	return threadMemorySketch;
 }
 
-std::map<PVOID, std::string> Debugger::sketchModulesSections(PVOID base, std::string fullModuleName)
+std::map<PVOID, std::string> DebuggerEngine::sketchModulesSections(PVOID base, std::string fullModuleName)
 {
 	std::map<PVOID, std::string> sectionsSkecth;
 	IMAGE_DOS_HEADER dosHeader;
 	IMAGE_NT_HEADERS ntHeaders;
-	if(!ReadProcessMemory(hProcess, base, &dosHeader, sizeof(IMAGE_DOS_HEADER), NULL))
+	if(!ReadProcessMemory(hProcess.get(), base, &dosHeader, sizeof(IMAGE_DOS_HEADER), NULL))
 	{
 		debuggerMessage("ReadProcessMemory dosHeader ReadProcessMemory failed ", GetLastError());
 		return sectionsSkecth;
 	}	
 
-	if(!ReadProcessMemory(hProcess, (PVOID)((SIZE_T)base+dosHeader.e_lfanew), &ntHeaders, sizeof(IMAGE_NT_HEADERS), NULL))
+	if(!ReadProcessMemory(hProcess.get(), (PVOID)((SIZE_T)base+dosHeader.e_lfanew), &ntHeaders, sizeof(IMAGE_NT_HEADERS), NULL))
 	{
 		debuggerMessage("ReadProcessMemory ntHeaders ReadProcessMemory failed ", GetLastError());
 		return sectionsSkecth;
@@ -757,7 +723,7 @@ std::map<PVOID, std::string> Debugger::sketchModulesSections(PVOID base, std::st
 
 	PVOID sectionsHeadersStart = (PVOID)((SIZE_T)base+dosHeader.e_lfanew+sizeof(IMAGE_NT_HEADERS));
 	debuggerMessage("sectionsHeadersStart", sectionsHeadersStart);
-	if(!ReadProcessMemory(hProcess, sectionsHeadersStart, sectionsHeaders.get(),
+	if(!ReadProcessMemory(hProcess.get(), sectionsHeadersStart, sectionsHeaders.get(),
 			sizeof(IMAGE_SECTION_HEADER)*ntHeaders.FileHeader.NumberOfSections, NULL))
 	{
 		debuggerMessage("ReadProcessMemory sectionsHeaders ReadProcessMemory failed ", GetLastError());
@@ -774,14 +740,14 @@ std::map<PVOID, std::string> Debugger::sketchModulesSections(PVOID base, std::st
 	return sectionsSkecth;
 }
 
-void Debugger::sketchMemoryTest()
+void DebuggerEngine::sketchMemoryTest()
 {
 	std::map<PVOID, std::string> mem = sketchMemory();
 	for(auto i : mem)
 		debuggerMessage(i.first, " - ", i.second);
 }
 
-void Debugger::exceptionEvent()
+void DebuggerEngine::exceptionEvent()
 {
 	EXCEPTION_RECORD *exceptionRecord = &debugEvent.u.Exception.ExceptionRecord;
 	PVOID addr = exceptionRecord->ExceptionAddress;
@@ -789,7 +755,7 @@ void Debugger::exceptionEvent()
 
 	if(breakpoints.find(addr) != breakpoints.end())
 	{
-		if(WriteProcessMemory(hProcess, addr, &breakpoints[addr], sizeof(BYTE), NULL))
+		if(WriteProcessMemory(hProcess.get(), addr, &breakpoints[addr], sizeof(BYTE), NULL))
 			lastBreakpoint = addr;
 		else
 			debuggerMessage("exceptionEvent WriteProcessMemory failed ", GetLastError());
@@ -799,30 +765,27 @@ void Debugger::exceptionEvent()
 		" at address ", 
 		exceptionRecord->ExceptionAddress);
 }
-void Debugger::createThreadEvent()
+void DebuggerEngine::createThreadEvent()
 {
-	activeThreads[debugEvent.dwThreadId] = debugEvent.u.CreateThread.hThread;
 	debuggerMessage("New thread with id ", debugEvent.dwThreadId);
 }
 
-void Debugger::createProcessEvent()
+void DebuggerEngine::createProcessEvent()
 {
 	debuggerMessage("Create Process Event with id ", debugEvent.dwProcessId);
 }
 
-void Debugger::exitThreadEvent()
+void DebuggerEngine::exitThreadEvent()
 {
-	CloseHandle(activeThreads[debugEvent.dwThreadId]);
-	activeThreads.erase(debugEvent.dwThreadId);
 	debuggerMessage("Exiting thread ",  debugEvent.dwThreadId," with code ", debugEvent.u.ExitThread.dwExitCode);
 }
 
-void Debugger::exitProcessEvent()
+void DebuggerEngine::exitProcessEvent()
 {
 	debuggerMessage("Exiting process with code ", debugEvent.u.ExitProcess.dwExitCode);
 }
 
-void Debugger::loadDllEvent()
+void DebuggerEngine::loadDllEvent()
 {
 	if(!isAttached)
 	{
@@ -830,22 +793,22 @@ void Debugger::loadDllEvent()
 	}
 }
 
-void Debugger::unloadDllEvent()
+void DebuggerEngine::unloadDllEvent()
 {
 	debuggerMessage("unloadDllEvent");
 }
 
-void Debugger::outputDebugStringEvent()
+void DebuggerEngine::outputDebugStringEvent()
 {
 	debuggerMessage("outputDebugString\n");
 }
 
-void Debugger::ripEvent()
+void DebuggerEngine::ripEvent()
 {
 	debuggerMessage("RIP error number ", debugEvent.u.RipInfo.dwError);
 }
 
-void Debugger::continueIfAndRun(states cond)
+void DebuggerEngine::continueIfAndRun(states cond)
 {
 	if(state == cond)
 	{
@@ -854,7 +817,7 @@ void Debugger::continueIfAndRun(states cond)
 	}
 }
 
-HANDLE Debugger::startup(const wchar_t *cmdLine)
+SmartHandle DebuggerEngine::startup(const wchar_t *cmdLine)
 {
     STARTUPINFOW si;
 	PROCESS_INFORMATION procInfo;
@@ -881,11 +844,10 @@ HANDLE Debugger::startup(const wchar_t *cmdLine)
     	debuggerMessage("CreateProcessW failed ", GetLastError());
 
 	processId = procInfo.dwProcessId;
-	activeThreads[procInfo.dwThreadId] = procInfo.hThread;//dupHandle(procInfo.hThread);
-    return procInfo.hProcess;
+    return SmartHandle(procInfo.hProcess);
 }
 
-NtQueryInformationProcess Debugger::getNtQueryInformationProcess()
+NtQueryInformationProcess DebuggerEngine::getNtQueryInformationProcess()
 {
 	HMODULE hNtdll = GetModuleHandleA("ntdll");
 	if(hNtdll == NULL)
@@ -895,7 +857,7 @@ NtQueryInformationProcess Debugger::getNtQueryInformationProcess()
 	return func;
 }
 
-NtQueryInformationThread Debugger::getNtQueryInformationThread()
+NtQueryInformationThread DebuggerEngine::getNtQueryInformationThread()
 {
 	HMODULE hNtdll = GetModuleHandleA("ntdll");
 	if(hNtdll == NULL)
@@ -905,7 +867,7 @@ NtQueryInformationThread Debugger::getNtQueryInformationThread()
 	return func;
 }
 
-std::unique_ptr<PEB> Debugger::loadPeb(SIZE_T *addr)
+std::unique_ptr<PEB> DebuggerEngine::loadPeb(SIZE_T *addr)
 {
 	NTSTATUS status;
 	PROCESS_BASIC_INFORMATION procInfo;
@@ -921,7 +883,7 @@ std::unique_ptr<PEB> Debugger::loadPeb(SIZE_T *addr)
 		return nullptr;
 	}
 
-	status = queryInfoProc(hProcess, ProcessBasicInformation, &procInfo, sizeof(PROCESS_BASIC_INFORMATION), &ret);
+	status = queryInfoProc(hProcess.get(), ProcessBasicInformation, &procInfo, sizeof(PROCESS_BASIC_INFORMATION), &ret);
 	if(!NT_SUCCESS(status))
 	{
 		debuggerMessage("NtQueryInformationProcess failed ", GetLastError());
@@ -931,7 +893,7 @@ std::unique_ptr<PEB> Debugger::loadPeb(SIZE_T *addr)
 	if(addr != nullptr)
 		*addr = (SIZE_T)procInfo.PebBaseAddress;
 
-	if(!ReadProcessMemory(hProcess, procInfo.PebBaseAddress, peb.get(), sizeof(PEB), NULL))
+	if(!ReadProcessMemory(hProcess.get(), procInfo.PebBaseAddress, peb.get(), sizeof(PEB), NULL))
 	{
 		debuggerMessage("loadPeb ReadProcessMemory failed ", GetLastError());
 		return nullptr;
@@ -939,7 +901,7 @@ std::unique_ptr<PEB> Debugger::loadPeb(SIZE_T *addr)
 	return peb;
 }
 
-std::unique_ptr<RTL_USER_PROCESS_PARAMETERS> Debugger::loadProcessParameters()
+std::unique_ptr<RTL_USER_PROCESS_PARAMETERS> DebuggerEngine::loadProcessParameters()
 {
 	std::unique_ptr<RTL_USER_PROCESS_PARAMETERS> procParams(new RTL_USER_PROCESS_PARAMETERS);
 	if(procParams == nullptr)
@@ -949,7 +911,7 @@ std::unique_ptr<RTL_USER_PROCESS_PARAMETERS> Debugger::loadProcessParameters()
 	if(peb == nullptr)
 		return nullptr;
 
-	if(!ReadProcessMemory(hProcess, peb->ProcessParameters, procParams.get(), sizeof(RTL_USER_PROCESS_PARAMETERS), NULL))
+	if(!ReadProcessMemory(hProcess.get(), peb->ProcessParameters, procParams.get(), sizeof(RTL_USER_PROCESS_PARAMETERS), NULL))
 	{
 		debuggerMessage("loadProcessParameters ReadProcessMemory failed ", GetLastError());
 		return nullptr;
@@ -957,7 +919,7 @@ std::unique_ptr<RTL_USER_PROCESS_PARAMETERS> Debugger::loadProcessParameters()
 	return procParams;
 }
 
-std::unique_ptr<PEB_LDR_DATA> Debugger::loadLoaderData()
+std::unique_ptr<PEB_LDR_DATA> DebuggerEngine::loadLoaderData()
 {
 	std::unique_ptr <PEB_LDR_DATA> loaderData(new PEB_LDR_DATA);
 	if (loaderData == nullptr)
@@ -966,7 +928,7 @@ std::unique_ptr<PEB_LDR_DATA> Debugger::loadLoaderData()
 	if(peb == nullptr)
 		return nullptr;
 
-	if(!ReadProcessMemory(hProcess, peb->LoaderData, loaderData.get(), sizeof(PEB_LDR_DATA), NULL))
+	if(!ReadProcessMemory(hProcess.get(), peb->LoaderData, loaderData.get(), sizeof(PEB_LDR_DATA), NULL))
 	{
 		debuggerMessage("loadLoaderData ReadProcessMemory failed ", GetLastError());
 		return nullptr;
@@ -974,7 +936,7 @@ std::unique_ptr<PEB_LDR_DATA> Debugger::loadLoaderData()
 	return loaderData;
 }
 
-std::string Debugger::memStateAsString(DWORD state)
+std::string DebuggerEngine::memStateAsString(DWORD state)
 {
 	if(state == MEM_COMMIT)
 		return std::string("MEM_COMMIT");	
@@ -985,7 +947,7 @@ std::string Debugger::memStateAsString(DWORD state)
 	return std::string("NONE STATE");
 }
 
-std::string Debugger::memTypeAsString(DWORD state)
+std::string DebuggerEngine::memTypeAsString(DWORD state)
 {
 	if(state == MEM_IMAGE)
 		return std::string("MEM_IMAGE");	
@@ -996,13 +958,13 @@ std::string Debugger::memTypeAsString(DWORD state)
 	return std::string("NONE TYPE");
 }
 
-void Debugger::setTrapFlag()
+void DebuggerEngine::setTrapFlag()
 {
-	HANDLE hT = activeThreads[debugEvent.dwThreadId];
+	SmartHandle hT = std::move(listActiveThreads()[debugEvent.dwThreadId]);
 	CONTEXT ctx;
 	ctx.ContextFlags = CONTEXT_CONTROL;
 	
-	if(!GetThreadContext(hT, &ctx))
+	if(!GetThreadContext(hT.get(), &ctx))
 	{
 		debuggerMessage("GetThreadContext failed ", GetLastError());
 		return;
@@ -1010,20 +972,20 @@ void Debugger::setTrapFlag()
 
 	ctx.EFlags |= 0x100; // setting trap flag
 
-	if(!SetThreadContext(hT, &ctx))
+	if(!SetThreadContext(hT.get(), &ctx))
 	{
 		debuggerMessage("GetThreadContext failed ", GetLastError());
 		return;
 	}
 }
 
-void Debugger::unsetTrapFlag()
+void DebuggerEngine::unsetTrapFlag()
 {
-	HANDLE hT = activeThreads[debugEvent.dwThreadId];
+	SmartHandle hT = std::move(listActiveThreads()[debugEvent.dwThreadId]);
 	CONTEXT ctx;
 	ctx.ContextFlags = CONTEXT_CONTROL;
 
-	if(!GetThreadContext(hT, &ctx))
+	if(!GetThreadContext(hT.get(), &ctx))
 	{
 		debuggerMessage("GetThreadContext failed ", GetLastError());
 		return;
@@ -1031,14 +993,14 @@ void Debugger::unsetTrapFlag()
 
 	ctx.EFlags &= 0xfffffeff; // unsetting trap flag
 
-	if(!SetThreadContext(hT, &ctx))
+	if(!SetThreadContext(hT.get(), &ctx))
 	{
 		debuggerMessage("GetThreadContext failed ", GetLastError());
 		return;
 	}
 }
 
-void Debugger::breakpointsInfo()
+void DebuggerEngine::breakpointsInfo()
 {
 	if(breakpoints.empty())
 	{
@@ -1049,7 +1011,7 @@ void Debugger::breakpointsInfo()
 		debuggerMessage("Breakpoint at ", bp.first);
 }
 
-void Debugger::deleteBreakpoint(PVOID addr)
+void DebuggerEngine::deleteBreakpoint(PVOID addr)
 {
 	if(breakpoints.empty())
 	{
@@ -1062,7 +1024,7 @@ void Debugger::deleteBreakpoint(PVOID addr)
 		return;
 	}
 
-	if(!WriteProcessMemory(hProcess, addr, &breakpoints[addr], sizeof(BYTE), NULL))
+	if(!WriteProcessMemory(hProcess.get(), addr, &breakpoints[addr], sizeof(BYTE), NULL))
 	{
 		debuggerMessage("deleteBreakpoint WriteProcessMemory failed ", GetLastError());
 		return;
@@ -1070,7 +1032,7 @@ void Debugger::deleteBreakpoint(PVOID addr)
 	breakpoints.erase(addr);
 }
 
-void Debugger::replaceInt3(PVOID addr, BYTE *buf, SIZE_T sz)
+void DebuggerEngine::replaceInt3(PVOID addr, BYTE *buf, SIZE_T sz)
 {
 	for(SIZE_T i=0; i<sz; i++)
 	{
@@ -1080,18 +1042,20 @@ void Debugger::replaceInt3(PVOID addr, BYTE *buf, SIZE_T sz)
 	}
 }
 
-void Debugger::attachRunningThreads()
+std::map<DWORD, SmartHandle> DebuggerEngine::listActiveThreads()
 {
-	HANDLE hSnap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, processId);
+	std::map<DWORD, SmartHandle> activeThreads;
+	SmartHandle hSnap = SmartHandle(CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, processId));
 	if(!hSnap)
 		return;
 	THREADENTRY32 info;
 	info.dwSize = sizeof(THREADENTRY32);
-	if(!Thread32First(hSnap, &info))
-		return;
+	if (!Thread32First(hSnap.get(), &info))
+		throw std::runtime_error("Cannot list active threads");
 	do
 	{
 		if(info.th32OwnerProcessID == processId)
-			activeThreads[info.th32ThreadID] = OpenThread(THREAD_ALL_ACCESS, false, info.th32ThreadID);
-	}while(Thread32Next(hSnap, &info));
+			activeThreads[info.th32ThreadID] = SmartHandle(OpenThread(THREAD_ALL_ACCESS, false, info.th32ThreadID));
+	}while(Thread32Next(hSnap.get(), &info));
+	return activeThreads;
 }
