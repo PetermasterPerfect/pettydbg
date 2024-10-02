@@ -1,29 +1,8 @@
-// x86_64-w64-mingw32-g++ main.cpp debugger.cpp commandline.cpp splitstring.cpp -o dbg.exe -static -std=c++17
-#include "main.h"
+#include "commandsEvalListener.h"
+#include "commandsLexer.h"
+#include <string>
+#include <thread>
 #define TEST 1
-
-DebuggerEngine* dbg;
-
-BOOL WINAPI registerSignals(DWORD dwCtrlType)
-{
-	if (dwCtrlType == CTRL_C_EVENT)
-		goto KILL;
-	else if (dwCtrlType == CTRL_BREAK_EVENT)
-	{
-		if (dbg->state == running)
-		{
-			dbg->breakSignal();
-			goto RET;
-		}
-		else
-			goto KILL;
-	}
-KILL:
-	DebugActiveProcessStop(dbg->processId);
-	ExitProcess(0xcc);
-RET:
-	return TRUE;
-}
 
 void commandPrompt()
 {
@@ -31,22 +10,26 @@ void commandPrompt()
 }
 
 template <typename T>
-void debuggerLoop(CommandsEvalListener<T> commandsEval)
+void debuggerLoop(CommandsEvalListener<T> &commandsEval)
 {
 	std::string cmd;
-	while (True)
+	while (true)
 	{
-		commandPrompt();
-		std::getline(std::cin, cmd);
+		if (!commandsEval.engine.isBusy())
+		{
+			commandPrompt();
+			std::getline(std::cin, cmd);
 
-		ANTLRInputStream input(cmd);
-		ExprLexer lexer(&input);
-		CommonTokenStream tokens(&lexer);
-		ExprParser parser(&tokens);
+			ANTLRInputStream input(cmd);
+			commandsLexer lexer(&input);
+			CommonTokenStream tokens(&lexer);
+			commandsParser parser(&tokens);
 
-		ParseTree* tree = parser.command();
-		ParseTreeWalker walker;
-		walker.walk(&commandsEval, tree);
+			ParseTree* tree = parser.command();
+			ParseTreeWalker walker;
+			walker.walk(&commandsEval, tree);
+		}
+		commandsEval.engine.handleDebugEvent();
 	}
 }
 
@@ -63,15 +46,13 @@ VERY IMPORTANT
 
 int main(int argc, char** argv)
 {
-
-	SetConsoleCtrlHandler(registerSignals, TRUE);
 	DebugSetProcessKillOnExit(TRUE);
 #ifdef TEST
 	wchar_t* cmd = new wchar_t[0x20];
 	wcscpy(cmd, L"\"C:\\Users\\LENOVO\\test.exe\"");
 
-	dbg = new DebuggerEngine(cmd);
-	dbg->enterDebuggerLoop();
+	CommandsEvalListener<wchar_t*> commandsEval(cmd);
+	debuggerLoop<wchar_t*>(commandsEval);
 #else
 
 	if (argc < 2)

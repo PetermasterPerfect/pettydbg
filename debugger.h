@@ -1,5 +1,4 @@
 #pragma once
-#include "commandline.h"
 #include <windows.h>
 #include <tlhelp32.h>
 #include <sstream>
@@ -17,36 +16,56 @@
 #define INT_1 0xCD01
 #define INT_3 0xCC
 
-enum states{not_running, running, breakpoint};
+class DebuggerEngine;
+enum states{halt, busy};
 
 struct SmartHandleDeleter
 {
 	BOOL operator()(HANDLE h) const {
-		CloseHandle(h);
+		return CloseHandle(h);
 	}
 };
 
 using SmartHandle = std::unique_ptr<void, SmartHandleDeleter>;
 
-class DebuggerEngine : public CommandLineInput
+class DebuggerEngine
 {
 public:
 	DebuggerEngine();
 	DebuggerEngine(wchar_t *);
 	DebuggerEngine(DWORD pid);
 
-	void enterDebuggerLoop();
+	bool isBusy() const { return state == busy; };
 	friend BOOL WINAPI registerSignals(DWORD);
+
+	void handleDebugEvent();
+	void continueExecution();
+	void restart();
+	void breakSignal();
+	void threadsInfo();
+	void memoryMappingInfo();
+	void dissassembly(PVOID, SIZE_T);
+	void setBreakPoint(PVOID);
+	void stepOver();
+	void stepIn();
+	//void stepOut();
+	void setTrapFlag();
+	void unsetTrapFlag();
+	void showStack(SIZE_T);
+	void showGeneralPurposeRegisters();
+	void breakpointsInfo();
+	void deleteBreakpoint(PVOID);
+	std::map<DWORD, SmartHandle> listActiveThreads();
 
 private:
 	//TODO: clean up mess with process handle process id and PROCESS_INFORMATION structure
 	DEBUG_EVENT debugEvent;
 	DWORD processId;
 	SmartHandle hProcess;
-	states state;
+	states state = halt;
 	bool isAttached;
 	bool isRunning;
-	bool firstBreakpoint; // inspiration from https://github.com/x64dbg/TitanEngine
+	bool firstBreakpoint = false; // inspiration from https://github.com/x64dbg/TitanEngine
 	bool steppingOut = false;
 	std::map<PVOID, BYTE> breakpoints;
 	PVOID stepBreakpoint = nullptr;
@@ -54,12 +73,7 @@ private:
 	bool continueTrap = false;
 
 	SmartHandle startup(const wchar_t*);
-	void continueIfState();
-	void continueExecution();
-	void restart();
-	void breakSignal();
-	void threadsInfo();
-	void memoryMappingInfo();
+	void continueIfState(states);
 	
 	template<class... Args> void debuggerMessage(Args ...);
 	template <typename T> std::string asHex(T);
@@ -67,9 +81,6 @@ private:
 	std::string memStateAsString(DWORD);
 	std::string memTypeAsString(DWORD);
 	std::string argumentAsHex(std::string);
-	
-	void handleCmd();
-	void handleEvent();
 	
 	void exceptionEvent();
 	void createThreadEvent();
@@ -90,19 +101,5 @@ private:
 	std::map<PVOID, std::string> sketchThreadMemory();
 	std::map<PVOID, std::string> sketchModulesSections(PVOID, std::string);
 	void sketchMemoryTest();
-	
-	void dissassembly(PVOID, SIZE_T);
-	void setBreakPoint(PVOID);
-	void stepOver();
-	void stepIn();
-	//void stepOut();
-	void setSystemBreakpoint(); // TODO: used nowhere
-	void setTrapFlag();
-	void unsetTrapFlag();
-	void showStack(SIZE_T);
-	void showGeneralPurposeRegisters();
-	void breakpointsInfo();
-	void deleteBreakpoint(PVOID);
 	void replaceInt3(PVOID, BYTE*, SIZE_T);
-	std::map<DWORD, SmartHandle> listActiveThreads();
 };

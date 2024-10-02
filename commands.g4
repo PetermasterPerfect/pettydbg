@@ -1,22 +1,22 @@
 grammar commands;
 
-command:  command0arg | command1arg | command2arg;
+command:  command0Arg | command1Arg | command2Arg;
 
-command0arg: CONTINUE NEWLINE
-	| RESTART NEWLINE
-	| THREADINFO NEWLINE
-	| MEMINFO NEWLINE
-	| NEXT NEWLINE
-	| STEPINTO NEWLINE
-	| FINISH NEWLINE
-	| REGISTERS NEWLINE
-	| BPOINTINFO NEWLINE;
+command0Arg: CONTINUE 
+	| RESTART 
+	| THREADINFO 
+	| MEMINFO 
+	| NEXT 
+	| STEPINTO 
+	| FINISH 
+	| REGISTERS 
+	| BPOINTINFO ;
 
-command1arg: STACK (INT | HEXINT) NEWLINE
-	| DELBPOINT (INT | HEXINT) NEWLINE
+command1Arg: STACK (INT | HEXINT) 
+	| DELBPOINT (INT | HEXINT) 
 	| BPOINT (INT | HEXINT);
 
-command2arg: DISASSEMBLY (INT | HEXINT) (INT | HEXINT) NEWLINE;
+command2Arg: DISASSEMBLY (INT | HEXINT) (INT | HEXINT) ;
 
 
 INT: [0-9]+;

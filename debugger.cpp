@@ -1,5 +1,28 @@
 #include "debugger.h"
 
+DebuggerEngine* g_engine;
+
+BOOL WINAPI registerSignals(DWORD dwCtrlType)
+{
+	if (dwCtrlType == CTRL_C_EVENT)
+		goto KILL;
+	else if (dwCtrlType == CTRL_BREAK_EVENT)
+	{
+		if (g_engine->isBusy())
+		{
+			g_engine->breakSignal();
+			goto RET;
+		}
+		else
+			goto KILL;
+	}
+KILL:
+	DebugActiveProcessStop(g_engine->processId);
+	ExitProcess(0xcc);
+RET:
+	return TRUE;
+}
+
 DebuggerEngine::DebuggerEngine()
 {
 }
@@ -11,10 +34,7 @@ DebuggerEngine::DebuggerEngine(wchar_t *cmd)
 		fprintf(stderr, "startup failed [%lx]\n", GetLastError());
 
 	printf("Running %ls with id %i\n", cmd, GetProcessId(hProcess.get()));
-	firstBreakpoint = false;
-	state = not_running;
 	isAttached = false;
-
 }
 
 DebuggerEngine::DebuggerEngine(DWORD pid)
@@ -28,8 +48,6 @@ DebuggerEngine::DebuggerEngine(DWORD pid)
 
 	debuggerMessage("Attaching to process with id ", pid);
 	processId = pid;
-	firstBreakpoint = false;
-	state = running;
 	isAttached = true;
 }
 
@@ -65,94 +83,11 @@ std::string DebuggerEngine::argumentAsHex(std::string arg)
 	return potentialAddr;
 }
 
-void DebuggerEngine::enterDebuggerLoop()
+void DebuggerEngine::handleDebugEvent()
 {
-	memset(&debugEvent, 0, sizeof(DEBUG_EVENT));
-	if(state == not_running && 
-		WaitForDebugEvent(&debugEvent, 50) && 
-		debugEvent.dwDebugEventCode == CREATE_PROCESS_DEBUG_EVENT)
-		continueIfAndRun(not_running);
+	if (!WaitForDebugEvent(&debugEvent, 10))
+		return;
 
-	while(true)
-	{
-		if(state != running)
-		{
-			commandLineInterface();
-			if(cmdToHandle == true)
-				handleCmd();
-		}
-		if(!WaitForDebugEvent(&debugEvent, 10))
-			continue;
-		handleEvent();
-	}
-}
-
-void DebuggerEngine::handleCmd() // TODO: almost everything in this function
-{
-	try
-	{
-		if (cmdToHandle && arguments.size() >= 1)
-		{
-			if (arguments[0] == "c")
-				continueExecution();
-			else if (arguments[0] == "r") // restart
-				restart();
-			else if (arguments[0] == "thinfo")
-				threadsInfo();
-			else if (arguments[0] == "meminfo")
-				memoryMappingInfo();
-			else if (arguments[0] == "n")
-				stepOver();
-			else if (arguments[0] == "s")
-				stepIn();
-			//else if(arguments[0] == "f")
-			//	stepOut();
-			else if (arguments[0] == "reg")
-				showGeneralPurposeRegisters();
-			else if (arguments[0] == "stack")
-			{
-				if (arguments.size() != 2)
-					debuggerMessage("Bad syntax!!!");
-				else
-					showStack(stoi(arguments[1]));
-			}
-			else if (arguments[0] == "bp") // setting a breakpoint
-			{
-				if (arguments.size() != 2)
-					debuggerMessage("Bad syntax!!!");
-				else
-					setBreakPoint((PVOID)fromHex(argumentAsHex(arguments[1])));
-			}
-			else if (arguments[0] == "delbp") // deleting a breakpoint
-			{
-				if (arguments.size() != 2)
-					debuggerMessage("Bad syntax!!!");
-				else
-					deleteBreakpoint((PVOID)fromHex(argumentAsHex(arguments[1])));
-			}
-			else if (arguments[0] == "bpinfo")
-				breakpointsInfo();
-			else if (arguments[0] == "dis")
-			{
-				if (arguments.size() != 3)
-					debuggerMessage("Bad syntax!!!");
-				else
-					dissassembly((PVOID)fromHex(argumentAsHex(arguments[1])), stoi(arguments[2]));
-			}
-			else
-				debuggerMessage("Command isnt recognized");
-			arguments.clear();
-			cmdToHandle = false;
-		}
-	}
-	catch (const std::exception& e)
-	{
-		std::cout << e.what();
-	}
-}
-
-void DebuggerEngine::handleEvent()
-{
 	switch(debugEvent.dwDebugEventCode)
 	{
 		case EXCEPTION_DEBUG_EVENT:
@@ -233,7 +168,7 @@ void DebuggerEngine::handleEvent()
 		case CREATE_THREAD_DEBUG_EVENT:
 		{
 			createThreadEvent();
-			/ContinueDebugEvent(debugEvent.dwProcessId, debugEvent.dwThreadId, DBG_CONTINUE);
+			continueIfState(busy);//TODO ???
 			break;
 		}
 		
@@ -241,20 +176,21 @@ void DebuggerEngine::handleEvent()
 		{
 			createProcessEvent();
 			ContinueDebugEvent(debugEvent.dwProcessId, debugEvent.dwThreadId, DBG_CONTINUE);
+			ContinueDebugEvent(debugEvent.dwProcessId, debugEvent.dwThreadId, DBG_CONTINUE);
 			break;
 		}
 		
 		case EXIT_THREAD_DEBUG_EVENT:
 		{
 			exitThreadEvent();
-			continueIfAndRun(running);
+			continueIfState(busy);
 			break;
 		}
 		
 		case EXIT_PROCESS_DEBUG_EVENT:
 		{
 			exitThreadEvent();
-			continueIfAndRun(running);
+			continueIfState(busy);
 			break;
 		}
 		
@@ -268,45 +204,22 @@ void DebuggerEngine::handleEvent()
 		case UNLOAD_DLL_DEBUG_EVENT:
 		{
 			unloadDllEvent();
-			continueIfAndRun(running);
+			continueIfState(busy);
 			break;
 		}
 		case OUTPUT_DEBUG_STRING_EVENT:
 		{
 			outputDebugStringEvent();
-			continueIfAndRun(running);
+			continueIfState(busy);
 			break;
 		}
 		case RIP_EVENT:
 		{
 			ripEvent();
-			continueIfAndRun(running);
+			continueIfState(busy);
 			break;
 		}
 	}
-}
-
-void DebuggerEngine::setSystemBreakpoint()
-{
-	if(state != not_running)
-	{
-		debuggerMessage("No point in running this command now - sytem breakpoint was alread hit");
-		return;
-	}
-
-	if(arguments.size() < 2)
-	{
-		debuggerMessage("Bad command - no argument");
-		return;
-	}
-
-	if(arguments[1] == "1")
-		firstBreakpoint = true;
-	else if(arguments[1] == "0")
-		firstBreakpoint = false;
-	else
-		debuggerMessage("Bad argument - expected 1 or 0, given \"", arguments[1], "\"");
-
 }
 
 void DebuggerEngine::showStack(SIZE_T sz)
@@ -341,7 +254,7 @@ void DebuggerEngine::showStack(SIZE_T sz)
 void DebuggerEngine::showGeneralPurposeRegisters()
 {
 	SmartHandle hT = std::move(listActiveThreads()[debugEvent.dwThreadId]);
-	CONTEXT ctx;
+	CONTEXT ctx = {};
 	ctx.ContextFlags = CONTEXT_ALL;
 
 	if(!GetThreadContext(hT.get(), &ctx))
@@ -523,11 +436,12 @@ void DebuggerEngine::continueExecution()
 		continueTrap = true;
 	}
 	ContinueDebugEvent(debugEvent.dwProcessId, debugEvent.dwThreadId, DBG_CONTINUE);
-	state = running;
+	state = busy;
 }
 
 
 //TODO: implement changing directory when restarting debuggee
+// but why??
 void DebuggerEngine::restart()
 {
 	if(isAttached)
@@ -536,10 +450,10 @@ void DebuggerEngine::restart()
 		return;
 	}
 
-	if(state == not_running)
+	if(state == halt)
 	{
 		ContinueDebugEvent(debugEvent.dwProcessId, debugEvent.dwThreadId, DBG_CONTINUE);
-		state = running;
+		state = busy;
 	}
 	else
 	{
@@ -555,7 +469,7 @@ void DebuggerEngine::restart()
 		WaitForSingleObject(hProcess.get(), 100);
 
 		hProcess = startup(cmd.realUnicode.Buffer);
-		state = not_running;
+		state = halt;
 		firstBreakpoint = true;
 		lastBreakpoint = nullptr;
 	}
@@ -703,8 +617,8 @@ std::map<PVOID, std::string> DebuggerEngine::sketchThreadMemory()
 std::map<PVOID, std::string> DebuggerEngine::sketchModulesSections(PVOID base, std::string fullModuleName)
 {
 	std::map<PVOID, std::string> sectionsSkecth;
-	IMAGE_DOS_HEADER dosHeader;
-	IMAGE_NT_HEADERS ntHeaders;
+	IMAGE_DOS_HEADER dosHeader = {};
+	IMAGE_NT_HEADERS ntHeaders = {};
 	if(!ReadProcessMemory(hProcess.get(), base, &dosHeader, sizeof(IMAGE_DOS_HEADER), NULL))
 	{
 		debuggerMessage("ReadProcessMemory dosHeader ReadProcessMemory failed ", GetLastError());
@@ -751,7 +665,7 @@ void DebuggerEngine::exceptionEvent()
 {
 	EXCEPTION_RECORD *exceptionRecord = &debugEvent.u.Exception.ExceptionRecord;
 	PVOID addr = exceptionRecord->ExceptionAddress;
-	state = breakpoint;
+	state = halt;
 
 	if(breakpoints.find(addr) != breakpoints.end())
 	{
@@ -808,12 +722,12 @@ void DebuggerEngine::ripEvent()
 	debuggerMessage("RIP error number ", debugEvent.u.RipInfo.dwError);
 }
 
-void DebuggerEngine::continueIfAndRun(states cond)
+void DebuggerEngine::continueIfState(states condition)
 {
-	if(state == cond)
+	if(state == condition)
 	{
 		ContinueDebugEvent(debugEvent.dwProcessId, debugEvent.dwThreadId, DBG_CONTINUE);
-		state = running;
+		state = busy;
 	}
 }
 
@@ -1047,7 +961,7 @@ std::map<DWORD, SmartHandle> DebuggerEngine::listActiveThreads()
 	std::map<DWORD, SmartHandle> activeThreads;
 	SmartHandle hSnap = SmartHandle(CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, processId));
 	if(!hSnap)
-		return;
+		return activeThreads;
 	THREADENTRY32 info;
 	info.dwSize = sizeof(THREADENTRY32);
 	if (!Thread32First(hSnap.get(), &info))
