@@ -153,9 +153,10 @@ void DebuggerEngine::handleDebugEvent()
 							return;
 						}
 					}
-					if(steppingOut)
+					if (finishing)
 					{
-						//stepOut();
+						finish();
+						handleDebugEvent();
 						return;
 					}
 					break;
@@ -220,6 +221,7 @@ void DebuggerEngine::handleDebugEvent()
 			break;
 		}
 	}
+		
 }
 
 void DebuggerEngine::showStack(SIZE_T sz)
@@ -304,12 +306,14 @@ void DebuggerEngine::dissassembly(PVOID addr, SIZE_T sz)
 	}
 }
 
-void DebuggerEngine::stepOver()
+void DebuggerEngine::stepOver() // doesnt work!!!
 {
 	EXCEPTION_RECORD* exceptionRecord = &debugEvent.u.Exception.ExceptionRecord;
 	PVOID addr = exceptionRecord->ExceptionAddress;
-	ZydisDecoder decoder;
-	ZydisDecoderInit(&decoder, ZYDIS_MACHINE_MODE_LONG_64, ZYDIS_STACK_WIDTH_64);
+	ZyanU64 runtime_address = (ZyanU64)addr;
+	ZyanUSize offset = 0;
+	ZydisDisassembledInstruction instruction;
+
 	BYTE buf[30];
 	if (!ReadProcessMemory(hProcess.get(), addr, buf, 30, NULL))
 	{
@@ -317,70 +321,71 @@ void DebuggerEngine::stepOver()
 		return;
 	}
 
-	ZydisDecodedInstruction instruction;
-	ZydisDecoderDecodeInstruction(&decoder, 0, addr, 30,
-		&instruction);
-	if (instruction.mnemonic == ZYDIS_MNEMONIC_CALL)
+	if (!ZYAN_SUCCESS(ZydisDisassembleIntel(
+		ZYDIS_MACHINE_MODE_LONG_64,
+		runtime_address,
+		buf,
+		30,
+		&instruction
+	)))
+		return;
+
+	if (instruction.info.mnemonic == ZYDIS_MNEMONIC_CALL)
 	{
-		PVOID bpBuf = addr;
+		PVOID bpBuf = reinterpret_cast<PVOID>(reinterpret_cast<size_t>(addr) + static_cast<size_t>(instruction.info.length));
 		setBreakPoint(bpBuf); // TODO: delete this breakpoint
 		stepBreakpoint = bpBuf;
 		continueExecution();
+		return;
 	}
 	setTrapFlag();
 	ContinueDebugEvent(debugEvent.dwProcessId, debugEvent.dwThreadId, DBG_CONTINUE);
 }
 
-/*
-void DebuggerEngine::stepOut()
+
+
+void DebuggerEngine::finish() // doesnt work!!!
 {
-	EXCEPTION_RECORD *exceptionRecord = &debugEvent.u.Exception.ExceptionRecord;
+	EXCEPTION_RECORD* exceptionRecord = &debugEvent.u.Exception.ExceptionRecord;
 	PVOID addr = exceptionRecord->ExceptionAddress;
-	csh handle;
-	cs_insn *insn;
-	size_t count;
-	BYTE buf[30]; // x86(x64) opcode is at most 15 bytes long
+	ZyanU64 runtime_address = (ZyanU64)addr;
+	ZydisDisassembledInstruction instruction;
 
-	if (cs_open(CS_ARCH_X86, CS_MODE_64, &handle) != CS_ERR_OK)
-		return ;
-
-	if(!ReadProcessMemory(hProcess.get(), addr, buf, 30, NULL))
+	finishing = true;
+	BYTE buf[30];
+	if (!ReadProcessMemory(hProcess.get(), addr, buf, 30, NULL))
 	{
 		debuggerMessage("singleStep ReadProcessMemory failed ", GetLastError());
 		return;
 	}
 
-	steppingOut = true;
-	count = cs_disasm(handle, (const uint8_t*)buf, 30, (uint64_t)addr, 0, &insn);
-	if (count > 0)
-	{
-		if(!strcmp(insn[0].mnemonic, "ret"))
-		{
-			cs_free(insn, count);
-			steppingOut = false;
-			setTrapFlag();
-			ContinueDebugEvent(debugEvent.dwProcessId, debugEvent.dwThreadId, DBG_CONTINUE);
-			return;
-		}
-		else if(!strcmp(insn[0].mnemonic, "call"))
-		{
-			PVOID bpBuf = (PVOID)insn[1].address;
-			setBreakPoint(bpBuf);
-			stepBreakpoint = bpBuf;
-			continueExecution();
-			cs_free(insn, count);
-			return;
-		}
-		cs_free(insn, count);
-	}
-	else
-		printf("ERROR: Failed to disassemble given code!\n");
+	if (!ZYAN_SUCCESS(ZydisDisassembleIntel(
+		ZYDIS_MACHINE_MODE_LONG_64,
+		runtime_address,
+		buf,
+		30,
+		&instruction
+	)))
+		return;
 
-	cs_close(&handle);
+	if (instruction.info.mnemonic == ZYDIS_MNEMONIC_RET)
+	{
+		finishing = false;
+		return;
+	}
+	else if (instruction.info.mnemonic == ZYDIS_MNEMONIC_CALL)
+	{
+
+		PVOID bpBuf = reinterpret_cast<PVOID>(reinterpret_cast<size_t>(addr) + static_cast<size_t>(instruction.info.length));
+		setBreakPoint(bpBuf);
+		stepBreakpoint = bpBuf;
+		continueExecution();
+		return;
+	}
 	setTrapFlag();
 	ContinueDebugEvent(debugEvent.dwProcessId, debugEvent.dwThreadId, DBG_CONTINUE);
 }
-*/
+
 void DebuggerEngine::stepIn()
 {
 	setTrapFlag();
