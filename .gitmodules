@@ -1,3 +1,6 @@
 [submodule "deps/zydis"]
 	path = deps/zydis
 	url = https://github.com/zyantific/zydis.git
+[submodule "deps/libdwarf-code"]
+	path = deps/libdwarf-code
+	url = https://github.com/davea42/libdwarf-code.git
