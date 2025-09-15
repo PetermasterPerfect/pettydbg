@@ -29,6 +29,11 @@ find_package(ANTLR REQUIRED)
 execute_process(
 	COMMAND java -jar ${ANTLR_EXECUTABLE} -Dlanguage=Cpp ${PROJECT_SOURCE_DIR}/commands.g4)
 
+set(BUILD_SHARED YES CACHE BOOL "Build shared libdwarf" FORCE)
+set(BUILD_NON_SHARED NO CACHE BOOL "Disable static libdwarf" FORCE)
+
+add_subdirectory(deps/libdwarf-code)
+
 option(ZYDIS_BUILD_TOOLS "" OFF)
 option(ZYDIS_BUILD_EXAMPLES "" OFF)
 add_subdirectory("deps/zydis")

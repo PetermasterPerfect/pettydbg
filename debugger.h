@@ -48,7 +48,7 @@ public:
 	void setBreakPoint(PVOID);
 	void stepOver();
 	void stepIn();
-	//void stepOut();
+	void finish();
 	void setTrapFlag();
 	void unsetTrapFlag();
 	void showStack(SIZE_T);
@@ -66,7 +66,7 @@ private:
 	bool isAttached;
 	bool isRunning;
 	bool firstBreakpoint = false; // inspiration from https://github.com/x64dbg/TitanEngine
-	bool steppingOut = false;
+	bool finishing = false;
 	std::map<PVOID, BYTE> breakpoints;
 	PVOID stepBreakpoint = nullptr;
 	PVOID lastBreakpoint = nullptr;
