@@ -1,5 +1,6 @@
 #include "debugger.h"
 
+
 DebuggerEngine* g_engine;
 
 BOOL WINAPI registerSignals(DWORD dwCtrlType)
@@ -23,10 +24,6 @@ RET:
 	return TRUE;
 }
 
-DebuggerEngine::DebuggerEngine()
-{
-}
-
 DebuggerEngine::DebuggerEngine(wchar_t *cmd)
 {
 	hProcess = startup(cmd);
@@ -35,6 +32,7 @@ DebuggerEngine::DebuggerEngine(wchar_t *cmd)
 
 	printf("Running %ls with id %i\n", cmd, GetProcessId(hProcess.get()));
 	isAttached = false;
+	imageBase = getImageBase();
 }
 
 DebuggerEngine::DebuggerEngine(DWORD pid)
@@ -49,6 +47,7 @@ DebuggerEngine::DebuggerEngine(DWORD pid)
 	debuggerMessage("Attaching to process with id ", pid);
 	processId = pid;
 	isAttached = true;
+	imageBase = getImageBase();
 }
 
 template<class... Args> void DebuggerEngine::debuggerMessage(Args... args)
@@ -535,7 +534,7 @@ std::map<PVOID, std::string> DebuggerEngine::sketchMemory()
 	if(loaderData == nullptr)
 		throw std::runtime_error("Cannot sketch process memory\n");
 
-	memorySketch[peb->ImageBaseAddress]  = "Image base ";
+	memorySketch[imageBase]  = "Image base ";
 	memorySketch[(PVOID)pebAddr]  = "Peb";
 	buf = loaderData->InLoadOrderModuleList;
 	if(!ReadProcessMemory(hProcess.get(), loaderData->InLoadOrderModuleList.Flink, &end, sizeof(LIST_ENTRY), NULL))
@@ -977,4 +976,252 @@ std::map<DWORD, SmartHandle> DebuggerEngine::listActiveThreads()
 			activeThreads[info.th32ThreadID] = SmartHandle(OpenThread(THREAD_ALL_ACCESS, false, info.th32ThreadID));
 	}while(Thread32Next(hSnap.get(), &info));
 	return activeThreads;
+}
+
+PVOID DebuggerEngine::getImageBase()
+{
+	std::unique_ptr<PEB> peb = loadPeb();
+	if (!peb)
+		return nullptr;
+
+	return peb->ImageBaseAddress;
+}
+
+std::unique_ptr<char[]> DebuggerEngine::getFullExecPath()
+{
+	DWORD pathlen = 32767;
+	std::unique_ptr<char[]> path(new char[pathlen]);
+	if (!path)
+		return nullptr;
+
+	if (!QueryFullProcessImageNameA(hProcess.get(), 0, path.get(), &pathlen))
+	{
+		std::cerr << "GetProcessImageFileNameA failed\n";
+		return nullptr;
+	}
+	std::unique_ptr<char[]> buf(new char[pathlen+1]);
+	if (!buf)
+		return nullptr;
+	memcpy(buf.get(), path.get(), pathlen+1);
+
+	return buf;
+}
+
+std::pair<std::string, Dwarf_Unsigned> DebuggerEngine::matchFunctionSymbol(Dwarf_Unsigned offset)
+{
+	Address2FunctionSymbol help(offset);
+	int res = DW_DLV_ERROR;
+	char realpath[MAX_PATH];
+	Dwarf_Handler errhand = 0;
+	Dwarf_Ptr errarg = 0;
+
+	res = dwarf_init_path(getFullExecPath().get(), realpath, MAX_PATH,
+		DW_GROUPNUMBER_ANY, errhand, errarg, &help.dbg, &help.error);
+	if (res == DW_DLV_ERROR)
+	{
+		std::cerr << "dwarf_init failed\n";
+		throw std::runtime_error("Cannot dwarf init");
+	}
+	if (res == DW_DLV_NO_ENTRY)
+	{
+		std::cerr << "dwarf_init no entry\n";
+		throw std::runtime_error("no entry dwarf init");
+	}
+
+	Dwarf_Unsigned cuHeaderLen = 0;
+	Dwarf_Unsigned abbrevOffset = 0;
+	Dwarf_Half addrSize = 0;
+	Dwarf_Half versionStamp = 0;
+	Dwarf_Half offsetSize = 0;
+	Dwarf_Half extSize = 0;
+	Dwarf_Unsigned typeoffset = 0;
+	Dwarf_Unsigned nextCuOffset = 0;
+	Dwarf_Half headerCuType = DW_UT_compile;
+
+
+	if (!findSubprogramInCuChain(help))
+		return std::make_pair(std::string(), 0);
+	return std::make_pair(help.funcName, help.size);
+}
+
+bool DebuggerEngine::findSubprogramInCuChain(Address2FunctionSymbol& help)
+{
+	int res;
+	Dwarf_Unsigned cuHeaderLen = 0;
+	Dwarf_Unsigned abbrevOffset = 0;
+	Dwarf_Half addrSize = 0;
+	Dwarf_Half versionStamp = 0;
+	Dwarf_Half offsetSize = 0;
+	Dwarf_Half extSize = 0;
+	Dwarf_Unsigned typeoffset = 0;
+	Dwarf_Unsigned nextCuOffset = 0;
+	Dwarf_Half headerCuType = DW_UT_compile;
+
+	for (int cuNum = 1;; cuNum++)
+	{
+		Dwarf_Die cuDie = 0;
+		res = DW_DLV_ERROR;
+		Dwarf_Sig8 signature;
+		memset(&signature, 0, sizeof(signature));
+		res = dwarf_next_cu_header_e(help.dbg, 1, &cuDie, &cuHeaderLen,
+			&versionStamp, &abbrevOffset, &addrSize, &offsetSize, &extSize,
+			&signature, &typeoffset, &nextCuOffset, &headerCuType, &help.error);
+
+		if (res == DW_DLV_ERROR)
+			throw std::runtime_error("Cannot dwarf_next_cu_header_e");
+		if (res == DW_DLV_NO_ENTRY)
+			throw std::runtime_error("no entry dwarf_next_cu_header_e");
+
+		res = findSubprogramInDieChain(cuDie, help, 0);
+		if (res == FOUND_SUBPROGRAM)
+			return true;
+		if (res == THIS_CU || res == DW_DLV_ERROR)
+			throw std::runtime_error("Bad return code");
+
+	}
+}
+
+int DebuggerEngine::findSubprogramInDieChain(Dwarf_Die die, Address2FunctionSymbol& help, int level)
+{
+	int res = checkDieForSubprogram(die, help, level);
+	if (res == DW_DLV_ERROR)
+		return res;
+	if (res == DW_DLV_NO_ENTRY)
+		return res;
+	if (res == NOT_THIS_CU)
+		return res;
+	if (res == FOUND_SUBPROGRAM)
+		return res;
+
+	Dwarf_Die iterDie = die;
+	Dwarf_Die child;
+	for (;;)
+	{
+		Dwarf_Die sibDie = 0;
+		int res = dwarf_child(iterDie, &child, &help.error);
+		if (res == DW_DLV_ERROR)
+			throw std::runtime_error("failed dwarf_child");
+		if (res == DW_DLV_OK)
+		{
+			int res2 = findSubprogramInDieChain(child, help, level + 1);
+			if (res2 == FOUND_SUBPROGRAM ||
+				res2 == NOT_THIS_CU ||
+				res2 == DW_DLV_ERROR)
+				return res2;
+			
+			child = 0;
+		}
+		res = dwarf_siblingof_c(iterDie, &sibDie, &help.error);
+		if (res == DW_DLV_ERROR)
+			throw std::runtime_error("dwarf_siblingof_c failed");
+		if (res == DW_DLV_NO_ENTRY)
+			break;
+		if (iterDie != die)
+			dwarf_dealloc(help.dbg, iterDie, DW_DLA_DIE);
+		iterDie = sibDie;
+		res = checkDieForSubprogram(iterDie, help, level);
+		if(res == DW_DLV_ERROR || res == FOUND_SUBPROGRAM)
+			return res;
+	}
+	return DW_DLV_OK;
+}
+
+int DebuggerEngine::checkDieForSubprogram(Dwarf_Die die, Address2FunctionSymbol& help, int level)
+{
+	Dwarf_Half tag = 0;
+	int res = dwarf_tag(die, &tag, &help.error);
+	if (res != DW_DLV_OK)
+		return res;
+	if (tag == DW_TAG_subprogram || tag == DW_TAG_inlined_subroutine)
+		return checkSubprogramDetails(die, help);
+	else if (tag == DW_TAG_compile_unit ||
+		tag == DW_TAG_partial_unit ||
+		tag == DW_TAG_type_unit)
+	{
+		if (level)
+			return NOT_THIS_CU;
+		return checkCompDir(die, help);
+	}
+	return DW_DLV_OK;
+}
+
+int DebuggerEngine::checkCompDir(Dwarf_Die die, Address2FunctionSymbol& help)
+{
+	Dwarf_Addr lowPc = 0;
+	Dwarf_Addr highPc = 0;
+	int res = getHighOffset(die, &lowPc, &highPc, &help.error);
+	if (res != DW_DLV_OK)
+		return res;
+	lowPc &= 0xffff;
+
+	if (help.offset >= lowPc || help.offset < lowPc + highPc)
+		return THIS_CU;
+	return NOT_THIS_CU;
+}
+
+int DebuggerEngine::checkSubprogramDetails(Dwarf_Die die, Address2FunctionSymbol& help)
+{
+	Dwarf_Addr lowPc = 0;
+	Dwarf_Addr highPc = 0;
+	int res = getHighOffset(die, &lowPc, &highPc, &help.error);
+	if (res != DW_DLV_OK)
+		return res;
+	lowPc &= 0xffff;
+	if (help.offset < lowPc || help.offset >= lowPc + highPc)
+		return DW_DLV_OK;
+
+	char* name = 0;
+	help.size = highPc;
+	res = dwarf_diename(die, &name, &help.error);
+	if (res == DW_DLV_OK)
+		help.funcName = std::string(name);
+	else
+	{
+		if (nameFromAbstract(die, help, &name))
+			help.funcName = std::string(name);
+		else
+			throw std::runtime_error("No name for inline subprogram\n");
+	}
+
+	return FOUND_SUBPROGRAM;
+}
+
+bool DebuggerEngine::nameFromAbstract(Dwarf_Die die, Address2FunctionSymbol& help, char** name)
+{
+	Dwarf_Die abrootdie = 0;
+	Dwarf_Attribute ab_attr = 0;
+	Dwarf_Off ab_offset = 0;
+	int res;
+
+	if (dwarf_attr(die, DW_AT_abstract_origin, &ab_attr, &help.error))
+		return false;
+	if (dwarf_global_formref(ab_attr, &ab_offset, &help.error))
+	{
+		dwarf_dealloc(help.dbg, ab_attr, DW_DLA_ATTR);
+		return false;
+	}
+	dwarf_dealloc(help.dbg, ab_attr, DW_DLA_ATTR);
+	if (dwarf_offdie_b(help.dbg, ab_offset, 1, &abrootdie, &help.error))
+		return false;
+	res = dwarf_diename(abrootdie, name, &help.error);
+	dwarf_dealloc_die(abrootdie);
+	return !res;
+}
+
+int DebuggerEngine::getHighOffset(Dwarf_Die die, Dwarf_Addr *lowpc, Dwarf_Addr *highpc, Dwarf_Error *err)
+{
+	Dwarf_Addr ret = 0;
+	Dwarf_Half form = 0;
+	Dwarf_Form_Class formclass = (Dwarf_Form_Class)0;
+	int res = dwarf_lowpc(die, lowpc, err);
+	if (res == DW_DLV_OK)
+	{
+		res = dwarf_highpc_b(die, highpc, &form, &formclass, err);
+		if (res == DW_DLV_OK)
+		{
+			if (formclass != DW_FORM_CLASS_CONSTANT)
+				*highpc -= *lowpc;
+		}
+	}
+	return res;
 }

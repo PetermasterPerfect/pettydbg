@@ -15,15 +15,12 @@ list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 
 add_definitions(-DANTLR4CPP_STATIC)
 
-# using /MD flag for antlr4_runtime (for Visual C++ compilers only)
+
 set(ANTLR4_WITH_STATIC_CRT OFF)
-# add external build for antlrcpp
 include(ExternalAntlr4Cpp)
-# add antrl4cpp artifacts to project environment
 include_directories(${ANTLR4_INCLUDE_DIRS})
 
 set(ANTLR_EXECUTABLE ${PROJECT_SOURCE_DIR}/antlr4.jar)
-# add macros to generate ANTLR Cpp code from grammar
 find_package(ANTLR REQUIRED)
 
 execute_process(
@@ -39,6 +36,7 @@ option(ZYDIS_BUILD_EXAMPLES "" OFF)
 add_subdirectory("deps/zydis")
 
 include_directories(${PROJECT_SOURCE_DIR})
+
 include_directories(${PROJECT_SOURCE_DIR}/build)
 
 file(GLOB BUILD
@@ -53,6 +51,13 @@ file(GLOB SOURCE
 include_directories(${ANTLR_SampleGrammarLexer_OUTPUT_DIR})
 include_directories(${ANTLR_SampleGrammarParser_OUTPUT_DIR})
 add_executable(pettydbg ${SOURCE} ${BUILD})
-#target_include_directories(pettydbg PRIVATE ${ANTLR4_INCLUDE_DIRS})
 target_link_libraries(pettydbg PRIVATE antlr4_static)
 target_link_libraries(pettydbg PRIVATE Zydis)
+
+# i added this. includes works but when i launch program it shows error that dwarf isnt found
+include_directories(${PROJECT_SOURCE_DIR}/deps/libdwarf/src/lib/libdwarf)
+target_link_libraries(pettydbg PRIVATE libdwarf::dwarf-shared)
+add_custom_command(TARGET pettydbg POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    $<TARGET_FILE:dwarf>
+    $<TARGET_FILE_DIR:pettydbg>) 
