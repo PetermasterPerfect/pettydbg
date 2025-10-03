@@ -33,6 +33,7 @@ DebuggerEngine::DebuggerEngine(wchar_t *cmd)
 	printf("Running %ls with id %i\n", cmd, GetProcessId(hProcess.get()));
 	isAttached = false;
 	imageBase = getImageBase();
+	loadPeNtHeader();
 }
 
 DebuggerEngine::DebuggerEngine(DWORD pid)
@@ -48,6 +49,7 @@ DebuggerEngine::DebuggerEngine(DWORD pid)
 	processId = pid;
 	isAttached = true;
 	imageBase = getImageBase();
+	loadPeNtHeader();
 }
 
 template<class... Args> void DebuggerEngine::debuggerMessage(Args... args)
@@ -275,23 +277,35 @@ void DebuggerEngine::showGeneralPurposeRegisters()
 	debuggerMessage("Rip=", (PVOID)ctx.Rip);
 }
 
-void DebuggerEngine::dissassembly(PVOID addr, SIZE_T sz)
+void DebuggerEngine::disassembly(PVOID addr, SIZE_T sz)
 {
 	std::unique_ptr<BYTE[]> buf(new BYTE[sz]);
 	if (buf == nullptr)
 		return;
-	if (!ReadProcessMemory(hProcess.get(), addr, buf.get(), sz, NULL))
+	if (!ReadProcessMemory(hProcess.get(), addr, buf.get(), sz, &sz))
 	{
 		std::stringstream ss;
 		ss << addr << "\n";
-		throw std::runtime_error("Cannot access memory at address " + ss.str());
+		std::cerr << "Cannot access memory at address " + ss.str();
 	}
 	replaceInt3(addr, buf.get(), sz);
+
+	size_t imageEnd = reinterpret_cast<size_t>(imageBase) + ntHdr.OptionalHeader.SizeOfImage;
+	std::pair<std::string, Dwarf_Unsigned> funcInfo;
+	size_t functionStart = 0;
+	size_t funcOffset = 0;
+	if (addr >= imageBase && addr < reinterpret_cast<PVOID>(imageEnd))
+	{
+		funcOffset = reinterpret_cast<size_t>(addr) - reinterpret_cast<size_t>(imageBase);
+		funcInfo = matchFunctionSymbol(funcOffset, functionStart);
+	}
 
 	// visualize relative addressing
 	ZyanU64 runtime_address = (ZyanU64)addr;
 	ZyanUSize offset = 0;
 	ZydisDisassembledInstruction instruction;
+	size_t lastFuncOffset = 0;
+	bool f = false;
 	while (ZYAN_SUCCESS(ZydisDisassembleIntel(
 		 ZYDIS_MACHINE_MODE_LONG_64,
 		runtime_address,
@@ -299,8 +313,32 @@ void DebuggerEngine::dissassembly(PVOID addr, SIZE_T sz)
 		sz - offset,
 		&instruction
 	))) {
-		printf("%016" PRIX64 "  %s\n", runtime_address, instruction.text);
+		if (funcInfo.second)
+		{
+			size_t curInsOff = lastFuncOffset;
+			if(!f)
+				curInsOff = reinterpret_cast<size_t>(addr) - (reinterpret_cast<size_t>(imageBase) + functionStart) + lastFuncOffset;
+			printf("%016" PRIX64 " %s+%x %s\n", runtime_address, funcInfo.first.c_str(), curInsOff, instruction.text);
+		}
+		else
+		{
+			funcOffset = runtime_address - reinterpret_cast<size_t>(imageBase);
+			funcInfo = matchFunctionSymbol(funcOffset, functionStart);
+			if (funcInfo.second)
+			{
+				lastFuncOffset = 0;
+				f = true;
+				printf("%016" PRIX64 " %s+%x %s\n", runtime_address, funcInfo.first.c_str(), lastFuncOffset, instruction.text);
+			}
+			else
+				printf("%016" PRIX64 "  %s\n", runtime_address, instruction.text);
+		}
 		offset += instruction.info.length;
+		lastFuncOffset = offset;
+		if(funcInfo.second < instruction.info.length)
+			funcInfo.second = 0;
+		else
+			funcInfo.second -= instruction.info.length;
 		runtime_address += instruction.info.length;
 	}
 }
@@ -1007,7 +1045,19 @@ std::unique_ptr<char[]> DebuggerEngine::getFullExecPath()
 	return buf;
 }
 
-std::pair<std::string, Dwarf_Unsigned> DebuggerEngine::matchFunctionSymbol(Dwarf_Unsigned offset)
+void DebuggerEngine::loadPeNtHeader()
+{
+	std::ifstream f(getFullExecPath().get(), std::ios::binary);
+	if (!f.is_open())
+		return ;
+
+	IMAGE_DOS_HEADER dosHdr;
+	f.read(reinterpret_cast<char*>(&dosHdr), sizeof(dosHdr));
+	f.seekg(dosHdr.e_lfanew);
+	f.read(reinterpret_cast<char*>(&ntHdr), sizeof(ntHdr));
+}
+
+std::pair<std::string, Dwarf_Unsigned> DebuggerEngine::matchFunctionSymbol(Dwarf_Unsigned offset, Dwarf_Addr &funcStart)
 {
 	Address2FunctionSymbol help(offset);
 	int res = DW_DLV_ERROR;
@@ -1041,6 +1091,8 @@ std::pair<std::string, Dwarf_Unsigned> DebuggerEngine::matchFunctionSymbol(Dwarf
 
 	if (!findSubprogramInCuChain(help))
 		return std::make_pair(std::string(), 0);
+
+	funcStart = help.functionStart;
 	return std::make_pair(help.funcName, help.size);
 }
 
@@ -1068,15 +1120,15 @@ bool DebuggerEngine::findSubprogramInCuChain(Address2FunctionSymbol& help)
 			&signature, &typeoffset, &nextCuOffset, &headerCuType, &help.error);
 
 		if (res == DW_DLV_ERROR)
-			throw std::runtime_error("Cannot dwarf_next_cu_header_e");
+			return false;
 		if (res == DW_DLV_NO_ENTRY)
-			throw std::runtime_error("no entry dwarf_next_cu_header_e");
+			return false;
 
 		res = findSubprogramInDieChain(cuDie, help, 0);
 		if (res == FOUND_SUBPROGRAM)
 			return true;
 		if (res == THIS_CU || res == DW_DLV_ERROR)
-			throw std::runtime_error("Bad return code");
+			return false;
 
 	}
 }
@@ -1100,7 +1152,7 @@ int DebuggerEngine::findSubprogramInDieChain(Dwarf_Die die, Address2FunctionSymb
 		Dwarf_Die sibDie = 0;
 		int res = dwarf_child(iterDie, &child, &help.error);
 		if (res == DW_DLV_ERROR)
-			throw std::runtime_error("failed dwarf_child");
+			return res;
 		if (res == DW_DLV_OK)
 		{
 			int res2 = findSubprogramInDieChain(child, help, level + 1);
@@ -1113,7 +1165,7 @@ int DebuggerEngine::findSubprogramInDieChain(Dwarf_Die die, Address2FunctionSymb
 		}
 		res = dwarf_siblingof_c(iterDie, &sibDie, &help.error);
 		if (res == DW_DLV_ERROR)
-			throw std::runtime_error("dwarf_siblingof_c failed");
+			return res;
 		if (res == DW_DLV_NO_ENTRY)
 			break;
 		if (iterDie != die)
@@ -1152,7 +1204,7 @@ int DebuggerEngine::checkCompDir(Dwarf_Die die, Address2FunctionSymbol& help)
 	int res = getHighOffset(die, &lowPc, &highPc, &help.error);
 	if (res != DW_DLV_OK)
 		return res;
-	lowPc &= 0xffff;
+	lowPc -= ntHdr.OptionalHeader.ImageBase;
 
 	if (help.offset >= lowPc || help.offset < lowPc + highPc)
 		return THIS_CU;
@@ -1166,12 +1218,15 @@ int DebuggerEngine::checkSubprogramDetails(Dwarf_Die die, Address2FunctionSymbol
 	int res = getHighOffset(die, &lowPc, &highPc, &help.error);
 	if (res != DW_DLV_OK)
 		return res;
-	lowPc &= 0xffff;
+	lowPc -= ntHdr.OptionalHeader.ImageBase;
 	if (help.offset < lowPc || help.offset >= lowPc + highPc)
 		return DW_DLV_OK;
 
 	char* name = 0;
 	help.size = highPc;
+	if (help.offset > lowPc)
+		help.size -= help.offset - lowPc;
+	help.functionStart = lowPc;
 	res = dwarf_diename(die, &name, &help.error);
 	if (res == DW_DLV_OK)
 		help.funcName = std::string(name);
@@ -1180,7 +1235,7 @@ int DebuggerEngine::checkSubprogramDetails(Dwarf_Die die, Address2FunctionSymbol
 		if (nameFromAbstract(die, help, &name))
 			help.funcName = std::string(name);
 		else
-			throw std::runtime_error("No name for inline subprogram\n");
+			return res;
 	}
 
 	return FOUND_SUBPROGRAM;

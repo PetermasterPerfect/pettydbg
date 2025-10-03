@@ -8,6 +8,7 @@
 #include <memory>
 #include <stdexcept>
 #include <iomanip>
+#include <fstream>
 #include "peb.h"
 #include "unicodeStringEx.h"
 #include "thread_info.h"
@@ -50,7 +51,7 @@ public:
 	void breakSignal();
 	void threadsInfo();
 	void memoryMappingInfo();
-	void dissassembly(PVOID, SIZE_T);
+	void disassembly(PVOID, SIZE_T);
 	void setBreakPoint(PVOID);
 	void stepOver();
 	void stepIn();
@@ -62,7 +63,7 @@ public:
 	void breakpointsInfo();
 	void deleteBreakpoint(PVOID);
 	std::map<DWORD, SmartHandle> listActiveThreads();
-	std::pair<std::string, Dwarf_Unsigned> matchFunctionSymbol(Dwarf_Unsigned);
+	std::pair<std::string, Dwarf_Unsigned> matchFunctionSymbol(Dwarf_Unsigned, Dwarf_Addr&);
 
 private:
 	struct Address2FunctionSymbol
@@ -72,6 +73,7 @@ private:
 		Dwarf_Unsigned offset;
 		Dwarf_Unsigned size = 0;
 		Dwarf_Error error = 0;
+		Dwarf_Addr functionStart = 0;
 		Address2FunctionSymbol(Dwarf_Unsigned off) : offset(off) {}
 
 		~Address2FunctionSymbol()
@@ -90,6 +92,7 @@ private:
 	DWORD processId;
 	SmartHandle hProcess;
 	PVOID imageBase;
+	IMAGE_NT_HEADERS ntHdr;
 	states state = halt;
 	bool isAttached;
 	bool isRunning;
@@ -132,6 +135,7 @@ private:
 	void replaceInt3(PVOID, BYTE*, SIZE_T);
 	
 	PVOID getImageBase();
+	void loadPeNtHeader();
 	std::unique_ptr<char[]> getFullExecPath();
 	int findSubprogramInDieChain(Dwarf_Die, Address2FunctionSymbol&, int);
 	bool findSubprogramInCuChain(Address2FunctionSymbol&);
