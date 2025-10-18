@@ -3,6 +3,8 @@
 #include <string>
 #include <thread>
 #define TEST 1
+#include "dwarf.h"
+#include "libdwarf.h"
 
 void commandPrompt()
 {
@@ -44,12 +46,13 @@ VERY IMPORTANT
 ***
 */
 
+
 int main(int argc, char** argv)
 {
 	DebugSetProcessKillOnExit(TRUE);
 #ifdef TEST
 	wchar_t* cmd = new wchar_t[0x20];
-	wcscpy(cmd, L"\"C:\\Users\\LENOVO\\test.exe\"");
+	wcscpy(cmd, L"\"C:\\Users\\LENOVO\\test1.exe\"");
 
 	CommandsEvalListener<wchar_t*> commandsEval(cmd);
 	debuggerLoop<wchar_t*>(commandsEval);

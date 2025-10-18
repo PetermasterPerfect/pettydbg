@@ -14,8 +14,10 @@
 #include "thread_info.h"
 #include <inttypes.h>
 #include <Zydis/Zydis.h>
+#include <optional>
 #include "dwarf.h"
 #include "libdwarf.h"
+#include <symbolObject.h>
 
 #define INT_1 0xCD01
 #define INT_3 0xCC
@@ -41,6 +43,7 @@ class DebuggerEngine
 public:
 	DebuggerEngine(wchar_t *);
 	DebuggerEngine(DWORD pid);
+	~DebuggerEngine();
 
 	bool isBusy() const { return state == busy; };
 	friend BOOL WINAPI registerSignals(DWORD);
@@ -64,30 +67,44 @@ public:
 	void deleteBreakpoint(PVOID);
 	std::map<DWORD, SmartHandle> listActiveThreads();
 	std::pair<std::string, Dwarf_Unsigned> matchFunctionSymbol(Dwarf_Unsigned, Dwarf_Addr&);
+	void mapLocalVariables(Dwarf_Unsigned);
+	void showLocals()
+	{
+		for (auto& x : localVariables)
+		{
+			if (auto v = std::dynamic_pointer_cast<VariableObject>(x))
+			{
+				std::cout << "varobj: " << v->symbolName << "\n";
+			}
+			else if (auto v = std::dynamic_pointer_cast<ConstObject>(x))
+			{
+				std::cout << "constobj: " << v->symbolName << "\n";
+			}
+		}
+	}
 
 private:
 	struct Address2FunctionSymbol
 	{
-		Dwarf_Debug dbg = 0;
 		std::string funcName;
 		Dwarf_Unsigned offset;
 		Dwarf_Unsigned size = 0;
-		Dwarf_Error error = 0;
 		Dwarf_Addr functionStart = 0;
 		Address2FunctionSymbol(Dwarf_Unsigned off) : offset(off) {}
-
-		~Address2FunctionSymbol()
-		{
-			if (error)
-			{
-				if(dbg)
-					dwarf_dealloc_error(dbg, error);
-			}
-			if(dbg)
-				dwarf_finish(dbg);
-		}
 	};
+	
+	struct Address2Locals
+	{
+		Dwarf_Unsigned offset;
+		Dwarf_Die subprogram;
+
+		Address2Locals(Dwarf_Unsigned off) : offset(off) {}
+	};
+
 	//TODO: clean up mess with process handle process id and PROCESS_INFORMATION structure
+	Dwarf_Debug dbg;
+	Dwarf_Error error = 0;
+
 	DEBUG_EVENT debugEvent;
 	DWORD processId;
 	SmartHandle hProcess;
@@ -102,6 +119,7 @@ private:
 	PVOID stepBreakpoint = nullptr;
 	PVOID lastBreakpoint = nullptr;
 	bool continueTrap = false;
+	std::vector<std::shared_ptr<SymbolObject>> localVariables;
 
 	SmartHandle startup(const wchar_t*);
 	void continueIfState(states);
@@ -137,11 +155,25 @@ private:
 	PVOID getImageBase();
 	void loadPeNtHeader();
 	std::unique_ptr<char[]> getFullExecPath();
+	void updateLocalVariables(size_t);
+
+	void initDwarf();
 	int findSubprogramInDieChain(Dwarf_Die, Address2FunctionSymbol&, int);
 	bool findSubprogramInCuChain(Address2FunctionSymbol&);
+
 	int checkDieForSubprogram(Dwarf_Die, Address2FunctionSymbol&, int);
+	int checkDieForSubprogram(Dwarf_Die, Address2Locals&, int);
 	int checkSubprogramDetails(Dwarf_Die, Address2FunctionSymbol&);
+	int checkSubprogramDetails(Dwarf_Die, Address2Locals&);
+	int checkCompDir(Dwarf_Die, Address2FunctionSymbol&);
+	int checkCompDir(Dwarf_Die, Address2Locals&);
+
 	int getHighOffset(Dwarf_Die, Dwarf_Addr*, Dwarf_Addr*, Dwarf_Error*);
 	bool nameFromAbstract(Dwarf_Die, Address2FunctionSymbol&, char**);
-	int checkCompDir(Dwarf_Die, Address2FunctionSymbol&);
+
+	int findVariablesInSubprogram(Dwarf_Die, Address2Locals&, int);
+	int scanSubprogramForVariables(Dwarf_Die die, Address2Locals& help, int level);
+	void extractVariableFromTag(Dwarf_Die, Address2Locals&);
+	int attrWithhAbstractOrigin(std::pair<Dwarf_Die, Dwarf_Die>, Dwarf_Half, Dwarf_Attribute*);
+	std::optional<std::string> varNameWithAbstractOrigin(std::pair<Dwarf_Die, Dwarf_Die>);
 };

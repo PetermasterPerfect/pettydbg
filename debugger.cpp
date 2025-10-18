@@ -1,6 +1,5 @@
 #include "debugger.h"
 
-
 DebuggerEngine* g_engine;
 
 BOOL WINAPI registerSignals(DWORD dwCtrlType)
@@ -34,6 +33,7 @@ DebuggerEngine::DebuggerEngine(wchar_t *cmd)
 	isAttached = false;
 	imageBase = getImageBase();
 	loadPeNtHeader();
+	initDwarf();
 }
 
 DebuggerEngine::DebuggerEngine(DWORD pid)
@@ -50,6 +50,18 @@ DebuggerEngine::DebuggerEngine(DWORD pid)
 	isAttached = true;
 	imageBase = getImageBase();
 	loadPeNtHeader();
+	initDwarf();
+}
+
+DebuggerEngine::~DebuggerEngine()
+{
+	if (error)
+	{
+		if (dbg)
+			dwarf_dealloc_error(dbg, error);
+	}
+	if(dbg)
+		dwarf_finish(dbg);
 }
 
 template<class... Args> void DebuggerEngine::debuggerMessage(Args... args)
@@ -94,6 +106,8 @@ void DebuggerEngine::handleDebugEvent()
 		case EXCEPTION_DEBUG_EVENT:
 		{
 			EXCEPTION_DEBUG_INFO& exception = debugEvent.u.Exception;
+			PVOID breakAddr = exception.ExceptionRecord.ExceptionAddress;
+			updateLocalVariables((size_t)breakAddr);
 			switch( exception.ExceptionRecord.ExceptionCode)
 			{
 				case STATUS_BREAKPOINT:
@@ -107,10 +121,9 @@ void DebuggerEngine::handleDebugEvent()
 
 						firstBreakpoint = false;
 					}
-					PVOID breakAddr = exception.ExceptionRecord.ExceptionAddress;
 					if(breakpoints.find(breakAddr) != breakpoints.end())
 					{
-						SmartHandle hT = std::move(listActiveThreads()[debugEvent.dwThreadId]); // TODO: what if hT is null
+						SmartHandle hT = std::move(listActiveThreads()[debugEvent.dwThreadId]);
 						if(!hT)
 							debuggerMessage("ht ", GetLastError());
 						CONTEXT ctx;
@@ -221,8 +234,7 @@ void DebuggerEngine::handleDebugEvent()
 			continueIfState(busy);
 			break;
 		}
-	}
-		
+	}		
 }
 
 void DebuggerEngine::showStack(SIZE_T sz)
@@ -1057,37 +1069,28 @@ void DebuggerEngine::loadPeNtHeader()
 	f.read(reinterpret_cast<char*>(&ntHdr), sizeof(ntHdr));
 }
 
+void DebuggerEngine::updateLocalVariables(size_t addr)
+{
+	if (addr >= (size_t)imageBase && addr < (size_t)imageBase + ntHdr.OptionalHeader.SizeOfImage)
+	{
+		size_t offset = addr - (size_t)imageBase;
+		auto it = localVariables.begin();
+		while (it != localVariables.end())
+		{
+			SmartHandle hT = std::move(listActiveThreads()[debugEvent.dwThreadId]);
+			if (!(*it)->value(hT.get(), offset))
+				localVariables.erase(it);
+		}
+		if (localVariables.empty())
+			mapLocalVariables(offset);
+	}
+	else
+		localVariables.clear();
+}
+
 std::pair<std::string, Dwarf_Unsigned> DebuggerEngine::matchFunctionSymbol(Dwarf_Unsigned offset, Dwarf_Addr &funcStart)
 {
 	Address2FunctionSymbol help(offset);
-	int res = DW_DLV_ERROR;
-	char realpath[MAX_PATH];
-	Dwarf_Handler errhand = 0;
-	Dwarf_Ptr errarg = 0;
-
-	res = dwarf_init_path(getFullExecPath().get(), realpath, MAX_PATH,
-		DW_GROUPNUMBER_ANY, errhand, errarg, &help.dbg, &help.error);
-	if (res == DW_DLV_ERROR)
-	{
-		std::cerr << "dwarf_init failed\n";
-		throw std::runtime_error("Cannot dwarf init");
-	}
-	if (res == DW_DLV_NO_ENTRY)
-	{
-		std::cerr << "dwarf_init no entry\n";
-		throw std::runtime_error("no entry dwarf init");
-	}
-
-	Dwarf_Unsigned cuHeaderLen = 0;
-	Dwarf_Unsigned abbrevOffset = 0;
-	Dwarf_Half addrSize = 0;
-	Dwarf_Half versionStamp = 0;
-	Dwarf_Half offsetSize = 0;
-	Dwarf_Half extSize = 0;
-	Dwarf_Unsigned typeoffset = 0;
-	Dwarf_Unsigned nextCuOffset = 0;
-	Dwarf_Half headerCuType = DW_UT_compile;
-
 
 	if (!findSubprogramInCuChain(help))
 		return std::make_pair(std::string(), 0);
@@ -1115,9 +1118,9 @@ bool DebuggerEngine::findSubprogramInCuChain(Address2FunctionSymbol& help)
 		res = DW_DLV_ERROR;
 		Dwarf_Sig8 signature;
 		memset(&signature, 0, sizeof(signature));
-		res = dwarf_next_cu_header_e(help.dbg, 1, &cuDie, &cuHeaderLen,
+		res = dwarf_next_cu_header_e(dbg, 1, &cuDie, &cuHeaderLen,
 			&versionStamp, &abbrevOffset, &addrSize, &offsetSize, &extSize,
-			&signature, &typeoffset, &nextCuOffset, &headerCuType, &help.error);
+			&signature, &typeoffset, &nextCuOffset, &headerCuType, &error);
 
 		if (res == DW_DLV_ERROR)
 			return false;
@@ -1130,6 +1133,25 @@ bool DebuggerEngine::findSubprogramInCuChain(Address2FunctionSymbol& help)
 		if (res == THIS_CU || res == DW_DLV_ERROR)
 			return false;
 
+	}
+}
+
+void DebuggerEngine::initDwarf()
+{
+	char realpath[MAX_PATH];
+	Dwarf_Handler errhand = 0;
+	Dwarf_Ptr errarg = 0;
+	int res = dwarf_init_path(getFullExecPath().get(), realpath, MAX_PATH,
+		DW_GROUPNUMBER_ANY, errhand, errarg, &dbg, &error);
+	if (res == DW_DLV_ERROR)
+	{
+		std::cerr << "dwarf_init failed\n";
+		return;
+	}
+	if (res == DW_DLV_NO_ENTRY)
+	{
+		std::cerr << "dwarf_init no entry\n";
+		return;
 	}
 }
 
@@ -1150,7 +1172,7 @@ int DebuggerEngine::findSubprogramInDieChain(Dwarf_Die die, Address2FunctionSymb
 	for (;;)
 	{
 		Dwarf_Die sibDie = 0;
-		int res = dwarf_child(iterDie, &child, &help.error);
+		int res = dwarf_child(iterDie, &child, &error);
 		if (res == DW_DLV_ERROR)
 			return res;
 		if (res == DW_DLV_OK)
@@ -1163,13 +1185,13 @@ int DebuggerEngine::findSubprogramInDieChain(Dwarf_Die die, Address2FunctionSymb
 			
 			child = 0;
 		}
-		res = dwarf_siblingof_c(iterDie, &sibDie, &help.error);
+		res = dwarf_siblingof_c(iterDie, &sibDie, &error);
 		if (res == DW_DLV_ERROR)
 			return res;
 		if (res == DW_DLV_NO_ENTRY)
 			break;
 		if (iterDie != die)
-			dwarf_dealloc(help.dbg, iterDie, DW_DLA_DIE);
+			dwarf_dealloc(dbg, iterDie, DW_DLA_DIE);
 		iterDie = sibDie;
 		res = checkDieForSubprogram(iterDie, help, level);
 		if(res == DW_DLV_ERROR || res == FOUND_SUBPROGRAM)
@@ -1181,7 +1203,7 @@ int DebuggerEngine::findSubprogramInDieChain(Dwarf_Die die, Address2FunctionSymb
 int DebuggerEngine::checkDieForSubprogram(Dwarf_Die die, Address2FunctionSymbol& help, int level)
 {
 	Dwarf_Half tag = 0;
-	int res = dwarf_tag(die, &tag, &help.error);
+	int res = dwarf_tag(die, &tag, &error);
 	if (res != DW_DLV_OK)
 		return res;
 	if (tag == DW_TAG_subprogram || tag == DW_TAG_inlined_subroutine)
@@ -1201,12 +1223,12 @@ int DebuggerEngine::checkCompDir(Dwarf_Die die, Address2FunctionSymbol& help)
 {
 	Dwarf_Addr lowPc = 0;
 	Dwarf_Addr highPc = 0;
-	int res = getHighOffset(die, &lowPc, &highPc, &help.error);
+	int res = getHighOffset(die, &lowPc, &highPc, &error);
 	if (res != DW_DLV_OK)
 		return res;
 	lowPc -= ntHdr.OptionalHeader.ImageBase;
 
-	if (help.offset >= lowPc || help.offset < lowPc + highPc)
+	if (help.offset >= lowPc && help.offset < lowPc + highPc)
 		return THIS_CU;
 	return NOT_THIS_CU;
 }
@@ -1215,7 +1237,7 @@ int DebuggerEngine::checkSubprogramDetails(Dwarf_Die die, Address2FunctionSymbol
 {
 	Dwarf_Addr lowPc = 0;
 	Dwarf_Addr highPc = 0;
-	int res = getHighOffset(die, &lowPc, &highPc, &help.error);
+	int res = getHighOffset(die, &lowPc, &highPc, &error);
 	if (res != DW_DLV_OK)
 		return res;
 	lowPc -= ntHdr.OptionalHeader.ImageBase;
@@ -1227,7 +1249,7 @@ int DebuggerEngine::checkSubprogramDetails(Dwarf_Die die, Address2FunctionSymbol
 	if (help.offset > lowPc)
 		help.size -= help.offset - lowPc;
 	help.functionStart = lowPc;
-	res = dwarf_diename(die, &name, &help.error);
+	res = dwarf_diename(die, &name, &error);
 	if (res == DW_DLV_OK)
 		help.funcName = std::string(name);
 	else
@@ -1248,17 +1270,17 @@ bool DebuggerEngine::nameFromAbstract(Dwarf_Die die, Address2FunctionSymbol& hel
 	Dwarf_Off ab_offset = 0;
 	int res;
 
-	if (dwarf_attr(die, DW_AT_abstract_origin, &ab_attr, &help.error))
+	if (dwarf_attr(die, DW_AT_abstract_origin, &ab_attr, &error))
 		return false;
-	if (dwarf_global_formref(ab_attr, &ab_offset, &help.error))
+	if (dwarf_global_formref(ab_attr, &ab_offset, &error))
 	{
-		dwarf_dealloc(help.dbg, ab_attr, DW_DLA_ATTR);
+		dwarf_dealloc(dbg, ab_attr, DW_DLA_ATTR);
 		return false;
 	}
-	dwarf_dealloc(help.dbg, ab_attr, DW_DLA_ATTR);
-	if (dwarf_offdie_b(help.dbg, ab_offset, 1, &abrootdie, &help.error))
+	dwarf_dealloc(dbg, ab_attr, DW_DLA_ATTR);
+	if (dwarf_offdie_b(dbg, ab_offset, 1, &abrootdie, &error))
 		return false;
-	res = dwarf_diename(abrootdie, name, &help.error);
+	res = dwarf_diename(abrootdie, name, &error);
 	dwarf_dealloc_die(abrootdie);
 	return !res;
 }
@@ -1280,3 +1302,264 @@ int DebuggerEngine::getHighOffset(Dwarf_Die die, Dwarf_Addr *lowpc, Dwarf_Addr *
 	}
 	return res;
 }
+
+void DebuggerEngine::mapLocalVariables(Dwarf_Unsigned off)
+{
+	int res = DW_DLV_ERROR;
+	Address2Locals help(off);
+
+	Dwarf_Unsigned cuHeaderLen = 0;
+	Dwarf_Unsigned abbrevOffset = 0;
+	Dwarf_Half addrSize = 0;
+	Dwarf_Half versionStamp = 0;
+	Dwarf_Half offsetSize = 0;
+	Dwarf_Half extSize = 0;
+	Dwarf_Unsigned typeoffset = 0;
+	Dwarf_Unsigned nextCuOffset = 0;
+	Dwarf_Half headerCuType = DW_UT_compile;
+
+	for (int cuNum = 1;; cuNum++)
+	{
+		Dwarf_Die cuDie = 0;
+		res = DW_DLV_ERROR;
+		Dwarf_Sig8 signature;
+		memset(&signature, 0, sizeof(signature));
+		res = dwarf_next_cu_header_e(dbg, 1, &cuDie, &cuHeaderLen,
+			&versionStamp, &abbrevOffset, &addrSize, &offsetSize, &extSize,
+			&signature, &typeoffset, &nextCuOffset, &headerCuType, &error);
+
+		if (res == DW_DLV_ERROR)
+			throw std::runtime_error("Cannot dwarf init");
+		if (res == DW_DLV_NO_ENTRY)
+			break;
+
+		findVariablesInSubprogram(cuDie, help, 0);
+	}
+}
+
+int DebuggerEngine::findVariablesInSubprogram(Dwarf_Die die, Address2Locals& help, int level)
+{
+	int res = checkDieForSubprogram(die, help, level);
+	if (res == DW_DLV_ERROR)
+		return res;
+	if (res == DW_DLV_NO_ENTRY)
+		return res;
+	if (res == NOT_THIS_CU)
+		return res;
+	if (res == FOUND_SUBPROGRAM)
+	{
+		scanSubprogramForVariables(die, help, 0);
+		return res;
+	}
+
+	Dwarf_Die iterDie = die;
+	Dwarf_Die child;
+	for (;;)
+	{
+		Dwarf_Die sibDie = 0;
+		int res = dwarf_child(iterDie, &child, &error);
+		if (res == DW_DLV_ERROR)
+			return res;
+		if (res == DW_DLV_OK)
+		{
+			int res2 = findVariablesInSubprogram(child, help, level + 1);
+			if (res2 == FOUND_SUBPROGRAM ||
+				res2 == NOT_THIS_CU ||
+				res2 == DW_DLV_ERROR)
+				return res2;
+
+			child = 0;
+		}
+		res = dwarf_siblingof_c(iterDie, &sibDie, &error);
+		if (res == DW_DLV_ERROR)
+			return res;
+		if (res == DW_DLV_NO_ENTRY)
+			break;
+		if (iterDie != die)
+			dwarf_dealloc(dbg, iterDie, DW_DLA_DIE);
+		iterDie = sibDie;
+		res = checkDieForSubprogram(iterDie, help, level);
+		if (res == FOUND_SUBPROGRAM)
+		{
+			scanSubprogramForVariables(iterDie, help, 0);
+			return res;
+		}
+		else if (res == DW_DLV_ERROR)
+			return res;
+	}
+	return res;
+}
+
+int DebuggerEngine::checkDieForSubprogram(Dwarf_Die die, Address2Locals& help, int level)
+{
+	Dwarf_Half tag = 0;
+	int res = dwarf_tag(die, &tag, &error);
+	if (res != DW_DLV_OK)
+		return res;
+	if (tag == DW_TAG_subprogram || tag == DW_TAG_inlined_subroutine)
+	{
+		res = checkSubprogramDetails(die, help);
+		if (res == FOUND_SUBPROGRAM)
+			return res;
+	}
+	else if (tag == DW_TAG_compile_unit ||
+		tag == DW_TAG_partial_unit ||
+		tag == DW_TAG_type_unit)
+	{
+		if (level)
+			return NOT_THIS_CU;
+		return checkCompDir(die, help);
+	}
+	return DW_DLV_OK;
+}
+
+int DebuggerEngine::checkCompDir(Dwarf_Die die, Address2Locals& help)
+{
+	Dwarf_Addr lowPc = 0;
+	Dwarf_Addr highPc = 0;
+	int res = getHighOffset(die, &lowPc, &highPc, &error);
+	if (res != DW_DLV_OK)
+		return res;
+	lowPc -= ntHdr.OptionalHeader.ImageBase;
+
+	if (help.offset >= lowPc && help.offset < lowPc + highPc)
+		return THIS_CU;
+	return NOT_THIS_CU;
+}
+
+int DebuggerEngine::checkSubprogramDetails(Dwarf_Die die, Address2Locals& help)
+{
+	Dwarf_Addr lowPc = 0;
+	Dwarf_Addr highPc = 0;
+	int res = getHighOffset(die, &lowPc, &highPc, &error);
+	if (res != DW_DLV_OK)
+		return res;
+	lowPc -= ntHdr.OptionalHeader.ImageBase;
+	if (help.offset < lowPc || help.offset >= lowPc + highPc)
+		return DW_DLV_OK;
+
+	help.subprogram = die;
+
+	return FOUND_SUBPROGRAM;
+}
+
+int DebuggerEngine::scanSubprogramForVariables(Dwarf_Die die, Address2Locals& help, int level)
+{
+	extractVariableFromTag(die, help);
+	Dwarf_Die child;
+	int res = dwarf_child(die, &child, &error);
+	if (res == DW_DLV_OK)
+	{
+		for (;;)
+		{
+			scanSubprogramForVariables(child, help, level + 1);
+
+			Dwarf_Die sibling = 0;
+			res = dwarf_siblingof_c(child, &sibling, &error);
+			dwarf_dealloc(dbg, child, DW_DLA_DIE);
+			if (res == DW_DLV_NO_ENTRY)
+				break;
+			if (res == DW_DLV_ERROR)
+				return res;
+
+			child = sibling;
+		}
+	}
+
+	return DW_DLV_OK;
+}
+
+void DebuggerEngine::extractVariableFromTag(Dwarf_Die die, Address2Locals &help)
+{
+	Dwarf_Half tag = 0;
+	int res = dwarf_tag(die, &tag, &error);
+	if (res != DW_DLV_OK)
+		return;
+	if (tag == DW_TAG_variable || tag == DW_TAG_formal_parameter)
+	{
+		std::pair<Dwarf_Die, Dwarf_Die> dies = std::make_pair(die, (Dwarf_Die)0);
+		Dwarf_Attribute attr = 0;
+		res = dwarf_attr(die, DW_AT_abstract_origin, &attr, &error);
+		if (res == DW_DLV_OK)
+		{
+			Dwarf_Off off = 0;
+			Dwarf_Bool info = 0;
+			res = dwarf_formref(attr, &off, &info, &error);
+			if (res == DW_DLV_OK)
+			{
+				Dwarf_Die abstractDie;
+				res = dwarf_offdie_b(dbg, off, info, &abstractDie, &error);
+				if (res == DW_DLV_OK)
+					dies.second = abstractDie;
+			}
+		}
+
+		auto name = varNameWithAbstractOrigin(dies);
+		res = attrWithhAbstractOrigin(dies, DW_AT_location, &attr);
+		if (res == DW_DLV_OK)
+		{
+			
+			Dwarf_Loc_Head_c loclist = 0;
+			Dwarf_Unsigned count = 0;
+			res = dwarf_get_loclist_c(attr, &loclist, &count, &error);
+			if (res == DW_DLV_OK && name)
+			{
+				auto sym = std::make_shared<VariableObject>(hProcess.get(), dbg, loclist, count, help.subprogram, error, name.value());
+				localVariables.push_back(std::move(sym));
+			}
+		}
+		else if (attrWithhAbstractOrigin(dies, DW_AT_const_value, &attr) == DW_DLV_OK)
+		{
+			Dwarf_Unsigned val = 0;
+			res = dwarf_formudata(attr, &val, &error);
+			if (res == DW_DLV_OK && name)
+			{
+				auto sym = std::make_shared<ConstObject>(val, help.subprogram, error, name.value());
+				localVariables.push_back(std::move(sym));
+			}
+		}		
+	}
+}
+
+int DebuggerEngine::attrWithhAbstractOrigin(std::pair<Dwarf_Die, Dwarf_Die> dies, Dwarf_Half attrNum, Dwarf_Attribute *attr)
+{
+	int res = dwarf_attr(dies.first, attrNum, attr, &error);
+	if (res == DW_DLV_OK)
+		return res;
+	if (dies.second)
+		return dwarf_attr(dies.second, attrNum, attr, &error);	
+	return res;
+}
+
+std::optional<std::string> DebuggerEngine::varNameWithAbstractOrigin(std::pair<Dwarf_Die, Dwarf_Die> dies)
+{
+	char* name = 0;
+	int res = dwarf_diename(dies.first, &name, &error);
+	if (res == DW_DLV_OK)
+		return std::string(name);
+	else
+	{
+		Dwarf_Die abrootdie = 0;
+		Dwarf_Attribute ab_attr = 0;
+		Dwarf_Off ab_offset = 0;
+		int res;
+		if (dwarf_attr(dies.first, DW_AT_abstract_origin, &ab_attr, &error))
+			return std::nullopt;
+		if (dwarf_global_formref(ab_attr, &ab_offset, &error))
+		{
+			dwarf_dealloc(dbg, ab_attr, DW_DLA_ATTR);
+			return std::nullopt;
+		}
+		dwarf_dealloc(dbg, ab_attr, DW_DLA_ATTR);
+		if (dwarf_offdie_b(dbg, ab_offset, 1, &abrootdie, &error))
+			return std::nullopt;
+		res = dwarf_diename(abrootdie, &name, &error);
+		if (res == DW_DLV_OK)
+		{
+			dwarf_dealloc_die(abrootdie);
+			return std::string(name);
+		}
+		dwarf_dealloc_die(abrootdie);
+	}
+	return std::nullopt;
+}	

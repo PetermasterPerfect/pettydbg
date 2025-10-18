@@ -92,6 +92,9 @@ void CommandsEvalListener<T>::enterCommand0Arg(commandsParser::Command0ArgContex
 	case commandsParser::BPOINTINFO:
 		engine.breakpointsInfo();
 		break;
+	case commandsParser::LVAR:
+		engine.showLocals();
+		break;
 	}
 }
 
@@ -102,6 +105,17 @@ void CommandsEvalListener<T>::enterCommand1Arg(commandsParser::Command1ArgContex
 	size_t val = valueFromArgument(ctx->children[1]);
 	switch (type)
 	{
+	case commandsParser::SYM:
+		try
+		{
+			engine.mapLocalVariables(val);
+			
+		}
+		catch (const std::runtime_error& ex)
+		{
+			std::cerr << "sym search failed: " << ex.what() << "\n";
+		}
+		break;
 	case commandsParser::STACK:
 		engine.showStack(val);
 	case commandsParser::DELBPOINT:
@@ -125,7 +139,7 @@ void CommandsEvalListener<T>::enterCommand2Arg(commandsParser::Command2ArgContex
 	switch (type)
 	{
 	case commandsParser::DISASSEMBLY:
-		engine.dissassembly(reinterpret_cast<PVOID>(val[0]), val[1]);
+		engine.disassembly(reinterpret_cast<PVOID>(val[0]), val[1]);
 		break;
 	}
 }

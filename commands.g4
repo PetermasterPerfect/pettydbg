@@ -10,11 +10,13 @@ command0Arg: CONTINUE
 	| STEPINTO 
 	| FINISH 
 	| REGISTERS 
-	| BPOINTINFO ;
+	| BPOINTINFO
+	| LVAR;
 
 command1Arg: STACK (INT | HEXINT) 
 	| DELBPOINT (INT | HEXINT) 
-	| BPOINT (INT | HEXINT);
+	| BPOINT (INT | HEXINT)
+	| SYM (INT | HEXINT);
 
 command2Arg: DISASSEMBLY (INT | HEXINT) (INT | HEXINT) ;
 
@@ -22,6 +24,8 @@ command2Arg: DISASSEMBLY (INT | HEXINT) (INT | HEXINT) ;
 INT: [0-9]+;
 HEXINT: '0x' [0-9a-fA-F]+;
 
+SYM: 'sym';
+LVAR: 'lvar';
 CONTINUE: 'c';
 RESTART: 'r';
 THREADINFO: 'thinfo';
