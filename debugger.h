@@ -9,6 +9,7 @@
 #include <stdexcept>
 #include <iomanip>
 #include <fstream>
+#include <algorithm>
 #include "peb.h"
 #include "unicodeStringEx.h"
 #include "thread_info.h"
@@ -17,7 +18,7 @@
 #include <optional>
 #include "dwarf.h"
 #include "libdwarf.h"
-#include <symbolObject.h>
+#include "symbolObject.h"
 
 #define INT_1 0xCD01
 #define INT_3 0xCC
@@ -66,22 +67,9 @@ public:
 	void breakpointsInfo();
 	void deleteBreakpoint(PVOID);
 	std::map<DWORD, SmartHandle> listActiveThreads();
-	std::pair<std::string, Dwarf_Unsigned> matchFunctionSymbol(Dwarf_Unsigned, Dwarf_Addr&);
-	void mapLocalVariables(Dwarf_Unsigned);
-	void showLocals()
-	{
-		for (auto& x : localVariables)
-		{
-			if (auto v = std::dynamic_pointer_cast<VariableObject>(x))
-			{
-				std::cout << "varobj: " << v->symbolName << "\n";
-			}
-			else if (auto v = std::dynamic_pointer_cast<ConstObject>(x))
-			{
-				std::cout << "constobj: " << v->symbolName << "\n";
-			}
-		}
-	}
+	void printLocal(std::string);
+	void showLocals();
+	void findFunctionSource(Dwarf_Unsigned);
 
 private:
 	struct Address2FunctionSymbol
@@ -90,13 +78,14 @@ private:
 		Dwarf_Unsigned offset;
 		Dwarf_Unsigned size = 0;
 		Dwarf_Addr functionStart = 0;
+		Dwarf_Die cuDie = 0;
 		Address2FunctionSymbol(Dwarf_Unsigned off) : offset(off) {}
 	};
 	
 	struct Address2Locals
 	{
 		Dwarf_Unsigned offset;
-		Dwarf_Die subprogram;
+		Dwarf_Die subprogram = 0;
 
 		Address2Locals(Dwarf_Unsigned off) : offset(off) {}
 	};
@@ -156,10 +145,15 @@ private:
 	void loadPeNtHeader();
 	std::unique_ptr<char[]> getFullExecPath();
 	void updateLocalVariables(size_t);
+	inline SmartHandle getDebugEventsThread() { return  std::move(listActiveThreads()[debugEvent.dwThreadId]);  }
 
 	void initDwarf();
 	int findSubprogramInDieChain(Dwarf_Die, Address2FunctionSymbol&, int);
 	bool findSubprogramInCuChain(Address2FunctionSymbol&);
+
+	std::pair<std::string, Dwarf_Unsigned> matchFunctionSymbol(Dwarf_Unsigned, Dwarf_Addr&);
+	
+	void mapLocalVariables(Dwarf_Unsigned);
 
 	int checkDieForSubprogram(Dwarf_Die, Address2FunctionSymbol&, int);
 	int checkDieForSubprogram(Dwarf_Die, Address2Locals&, int);
@@ -176,4 +170,7 @@ private:
 	void extractVariableFromTag(Dwarf_Die, Address2Locals&);
 	int attrWithhAbstractOrigin(std::pair<Dwarf_Die, Dwarf_Die>, Dwarf_Half, Dwarf_Attribute*);
 	std::optional<std::string> varNameWithAbstractOrigin(std::pair<Dwarf_Die, Dwarf_Die>);
+	Dwarf_Signed DebuggerEngine::findAddressLineIndex(Dwarf_Line*, Dwarf_Signed, size_t*, Address2FunctionSymbol&);
+
+	std::string correctWslPath(std::string);
 };

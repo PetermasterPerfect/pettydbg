@@ -26,7 +26,8 @@ struct Location
 class SymbolObject
 {
 public:
-	SymbolObject() {}
+	std::string symbolName;
+	SymbolObject(std::string symbolName): symbolName(symbolName) {}
 	virtual ~SymbolObject() = default;
 	virtual bool inRange(size_t ) = 0;
 	virtual std::optional<size_t> value(HANDLE, size_t) = 0;
@@ -48,7 +49,6 @@ class VariableObject : public SymbolObject
 	std::unique_ptr<VariableObject> loadCfa();
 
 public:
-	std::string symbolName;
 	VariableObject(HANDLE, Dwarf_Debug, Dwarf_Loc_Head_c, Dwarf_Unsigned, Dwarf_Die, Dwarf_Error, std::string name="");
 	~VariableObject()
 	{
@@ -65,7 +65,6 @@ class ConstObject : public SymbolObject
 	size_t lowpc = 0;
 	size_t highpc = 0;
 public:
-	std::string symbolName;
 	ConstObject(size_t, Dwarf_Die, Dwarf_Error, std::string);// : val(v) {}
 	std::optional<size_t> value(HANDLE hThread=nullptr, size_t addr=0) override
 	{

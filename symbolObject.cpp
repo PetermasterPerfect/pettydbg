@@ -2,7 +2,7 @@
 #include "dwarfInterp.h"
 
 VariableObject::VariableObject(HANDLE hProcess, Dwarf_Debug dbg, Dwarf_Loc_Head_c loclist, Dwarf_Unsigned count,  Dwarf_Die subprog, Dwarf_Error error, std::string name) :
-	hProcess(hProcess), dbg(dbg), loclist(loclist), error(error), symbolName(name), subprogram(subprog)
+	hProcess(hProcess), dbg(dbg), loclist(loclist), error(error), SymbolObject(name), subprogram(subprog)
 {
 	Dwarf_Locdesc_c entry = 0;
 	Dwarf_Small op = 0;
@@ -233,7 +233,7 @@ size_t VariableObject::readVarFromMemory(PVOID address)
 	return ret;
 }
 
-ConstObject::ConstObject(size_t v, Dwarf_Die subprogram, Dwarf_Error error, std::string name) : val(v), symbolName(name)
+ConstObject::ConstObject(size_t v, Dwarf_Die subprogram, Dwarf_Error error, std::string name) : val(v), SymbolObject(name)
 {
 	Dwarf_Addr lopc = 0;
 	Dwarf_Addr hipc = 0; 

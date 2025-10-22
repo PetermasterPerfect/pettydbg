@@ -16,15 +16,15 @@ command0Arg: CONTINUE
 command1Arg: STACK (INT | HEXINT) 
 	| DELBPOINT (INT | HEXINT) 
 	| BPOINT (INT | HEXINT)
-	| SYM (INT | HEXINT);
+	| SYM (INT | HEXINT)
+	| PRINT STRING;
 
 command2Arg: DISASSEMBLY (INT | HEXINT) (INT | HEXINT) ;
 
 
 INT: [0-9]+;
 HEXINT: '0x' [0-9a-fA-F]+;
-
-SYM: 'sym';
+SYM: 'sym';	
 LVAR: 'lvar';
 CONTINUE: 'c';
 RESTART: 'r';
@@ -33,6 +33,7 @@ MEMINFO: 'meminfo';
 NEXT: 'n';
 STEPINTO: 's';
 FINISH: 'f';
+PRINT: 'p';
 REGISTERS: 'reg';
 STACK: 'stack';
 BPOINT: 'bp';
@@ -41,3 +42,4 @@ BPOINTINFO: 'bpinfo';
 DISASSEMBLY: 'dis';
 NEWLINE: '\r'? '\n';
 WS : [ \t]+ -> skip ;
+STRING: [a-zA-Z][a-zA-Z0-9]*;

@@ -123,7 +123,7 @@ void DebuggerEngine::handleDebugEvent()
 					}
 					if(breakpoints.find(breakAddr) != breakpoints.end())
 					{
-						SmartHandle hT = std::move(listActiveThreads()[debugEvent.dwThreadId]);
+						SmartHandle hT = getDebugEventsThread();
 						if(!hT)
 							debuggerMessage("ht ", GetLastError());
 						CONTEXT ctx;
@@ -241,7 +241,7 @@ void DebuggerEngine::showStack(SIZE_T sz)
 {
 	PVOID stackAddr;
 	std::unique_ptr<PVOID[]> stackToView(new PVOID[sz]);
-	SmartHandle hT = std::move(listActiveThreads()[debugEvent.dwThreadId]);
+	SmartHandle hT = getDebugEventsThread();
 	CONTEXT ctx;
 	ctx.ContextFlags = CONTEXT_ALL;
 
@@ -268,7 +268,7 @@ void DebuggerEngine::showStack(SIZE_T sz)
 
 void DebuggerEngine::showGeneralPurposeRegisters()
 {
-	SmartHandle hT = std::move(listActiveThreads()[debugEvent.dwThreadId]);
+	SmartHandle hT = getDebugEventsThread();
 	CONTEXT ctx = {};
 	ctx.ContextFlags = CONTEXT_ALL;
 
@@ -928,7 +928,7 @@ std::string DebuggerEngine::memTypeAsString(DWORD state)
 
 void DebuggerEngine::setTrapFlag()
 {
-	SmartHandle hT = std::move(listActiveThreads()[debugEvent.dwThreadId]);
+	SmartHandle hT = getDebugEventsThread();
 	CONTEXT ctx;
 	ctx.ContextFlags = CONTEXT_CONTROL;
 	
@@ -949,7 +949,7 @@ void DebuggerEngine::setTrapFlag()
 
 void DebuggerEngine::unsetTrapFlag()
 {
-	SmartHandle hT = std::move(listActiveThreads()[debugEvent.dwThreadId]);
+	SmartHandle hT = getDebugEventsThread();
 	CONTEXT ctx;
 	ctx.ContextFlags = CONTEXT_CONTROL;
 
@@ -1075,12 +1075,14 @@ void DebuggerEngine::updateLocalVariables(size_t addr)
 	{
 		size_t offset = addr - (size_t)imageBase;
 		auto it = localVariables.begin();
-		while (it != localVariables.end())
-		{
-			SmartHandle hT = std::move(listActiveThreads()[debugEvent.dwThreadId]);
-			if (!(*it)->value(hT.get(), offset))
-				localVariables.erase(it);
-		}
+		localVariables.erase( std::remove_if(localVariables.begin(), localVariables.end(),
+				[=](std::shared_ptr<SymbolObject> const& p)
+					{ 
+						SmartHandle hT = getDebugEventsThread();
+						return !(*it)->value(hT.get(), offset); 
+					}
+			), localVariables.end());
+
 		if (localVariables.empty())
 			mapLocalVariables(offset);
 	}
@@ -1128,11 +1130,11 @@ bool DebuggerEngine::findSubprogramInCuChain(Address2FunctionSymbol& help)
 			return false;
 
 		res = findSubprogramInDieChain(cuDie, help, 0);
+		help.cuDie = cuDie;
 		if (res == FOUND_SUBPROGRAM)
 			return true;
 		if (res == THIS_CU || res == DW_DLV_ERROR)
 			return false;
-
 	}
 }
 
@@ -1562,4 +1564,160 @@ std::optional<std::string> DebuggerEngine::varNameWithAbstractOrigin(std::pair<D
 		dwarf_dealloc_die(abrootdie);
 	}
 	return std::nullopt;
-}	
+}
+
+
+void DebuggerEngine::printLocal(std::string varName)
+{
+	EXCEPTION_DEBUG_INFO& exception = debugEvent.u.Exception;
+	PVOID breakAddr = exception.ExceptionRecord.ExceptionAddress;
+	size_t addr = ntHdr.OptionalHeader.ImageBase + (size_t)breakAddr - (size_t)imageBase;
+	for (auto x : localVariables)
+	{
+		if (x->symbolName == varName)
+		{
+			SmartHandle hT = getDebugEventsThread();
+			auto val = x->value(hT.get(), addr);
+			if (val)
+				std::cout << varName << " = " << val.value() << "\n";
+			else
+				std::cerr << "Cant retrieve " << varName << " value\n";
+		}
+	}
+}
+
+void DebuggerEngine::showLocals()
+{
+	for (auto& x : localVariables)
+	{
+		if (auto v = std::dynamic_pointer_cast<VariableObject>(x))
+		{
+			std::cout << "varobj: " << v->symbolName << "\n";
+		}
+		else if (auto v = std::dynamic_pointer_cast<ConstObject>(x))
+		{
+			std::cout << "constobj: " << v->symbolName << "\n";
+		}
+	}
+}
+
+void DebuggerEngine::findFunctionSource(Dwarf_Unsigned offset)
+{
+	Address2FunctionSymbol help(offset);
+
+	if (!findSubprogramInCuChain(help))
+		return;
+
+	char** srcs = 0;
+	Dwarf_Unsigned version = 0;
+	Dwarf_Small tableCount = 0;
+	Dwarf_Line_Context context = 0;
+
+	int res = dwarf_srclines_b(help.cuDie, &version, &tableCount, &context, &error);
+	if (res != DW_DLV_OK)
+		return;
+
+	Dwarf_Line* lineBuf = 0;
+	Dwarf_Signed lineCount = 0;
+	res = dwarf_srclines_from_linecontext(context,
+		&lineBuf, &lineCount, &error);
+	if (res != DW_DLV_OK)
+		return;
+
+	size_t addressLineNumber;
+	Dwarf_Signed idx = findAddressLineIndex(lineBuf, lineCount, &addressLineNumber, help);
+	if (idx == -1)
+		return;
+
+	Dwarf_Signed startIdx = idx >= 5 ? idx - 5 : 0;
+	Dwarf_Signed endIdx = idx >= lineCount-6 ? lineCount-1 : idx+5;
+
+	char* srcName = 0;
+	res = dwarf_linesrc(lineBuf[idx], &srcName, &error);
+	if (res != DW_DLV_OK)
+		return;
+		
+	std::pair<size_t, size_t> lineRange;
+	res = dwarf_lineno(lineBuf[startIdx], &lineRange.first, &error);
+	if (res != DW_DLV_OK)
+		return;
+
+	res = dwarf_lineno(lineBuf[endIdx], &lineRange.second, &error);
+	if (res != DW_DLV_OK)
+		return;
+
+	std::ifstream file(correctWslPath(srcName));
+	if (!file)
+		return;
+
+	std::string line;
+	size_t lineNum = 1;
+	while (std::getline(file, line))
+	{
+		if (lineNum >= lineRange.first && lineNum <= lineRange.second)
+		{
+			if (lineNum == addressLineNumber)
+				std::cout << "=> " << line << "\n";
+			else
+				std::cout << "   " << line << "\n";
+		}
+		lineNum++;
+	}
+
+	return;
+}
+
+Dwarf_Signed DebuggerEngine::findAddressLineIndex(Dwarf_Line* lineBuf,
+	Dwarf_Signed lineCount, size_t* lineNum, Address2FunctionSymbol &help)
+{
+	size_t previous = 0;
+	Dwarf_Signed ret = -1;
+	for (Dwarf_Signed i = 0; i < lineCount; i++)
+	{
+		Dwarf_Addr retAddr = 0;
+		int res = dwarf_lineaddr(lineBuf[i], &retAddr, &error);
+		if (res != DW_DLV_OK)
+			continue;
+
+		size_t offset = retAddr - ntHdr.OptionalHeader.ImageBase;
+
+		if (i)
+		{
+			if (offset == help.offset)
+			{
+				ret = i;
+				break;
+			}
+			else if (help.offset > previous && help.offset < offset)
+			{
+				ret = i - 1;
+				break;
+			}
+		}
+		else if (offset == help.offset)
+		{
+			ret = 0;
+			break;
+		}
+
+		previous = offset;
+	}
+
+	int res = dwarf_lineno(lineBuf[ret], lineNum, &error);
+	if (res != DW_DLV_OK)
+		return -1;
+	return ret;
+}
+
+std::string DebuggerEngine::correctWslPath(std::string input)
+{
+	std::string path = input;
+	std::string prefix = "/mnt/c";
+	if (path.rfind(prefix, 0) == 0) 
+	{
+		path.replace(0, prefix.size(), "C:\\");
+	}
+
+	std::replace(path.begin(), path.end(), '/', '\\');
+	return path;
+}
