@@ -49,7 +49,7 @@ public:
 	bool isBusy() const { return state == busy; };
 	friend BOOL WINAPI registerSignals(DWORD);
 
-	void handleDebugEvent();
+	void  handleDebugEvent(unsigned level=0);
 	void continueExecution();
 	void restart();
 	void breakSignal();
@@ -104,6 +104,7 @@ private:
 	bool isRunning;
 	bool firstBreakpoint = false; // inspiration from https://github.com/x64dbg/TitanEngine
 	bool finishing = false;
+	bool returning = false;
 	std::map<PVOID, BYTE> breakpoints;
 	PVOID stepBreakpoint = nullptr;
 	PVOID lastBreakpoint = nullptr;

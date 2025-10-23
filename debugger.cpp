@@ -96,15 +96,17 @@ std::string DebuggerEngine::argumentAsHex(std::string arg)
 	return potentialAddr;
 }
 
-void DebuggerEngine::handleDebugEvent()
+ void DebuggerEngine::handleDebugEvent(unsigned level)
 {
-	if (!WaitForDebugEvent(&debugEvent, 10))
-		return;
+	 if (!WaitForDebugEvent(&debugEvent, 10))
+		 return;
 
 	switch(debugEvent.dwDebugEventCode)
 	{
 		case EXCEPTION_DEBUG_EVENT:
 		{
+			if(!level)
+				exceptionEvent();
 			EXCEPTION_DEBUG_INFO& exception = debugEvent.u.Exception;
 			PVOID breakAddr = exception.ExceptionRecord.ExceptionAddress;
 			updateLocalVariables((size_t)breakAddr);
@@ -148,6 +150,11 @@ void DebuggerEngine::handleDebugEvent()
 						deleteBreakpoint(stepBreakpoint);
 						stepBreakpoint = nullptr;
 					}
+					if (finishing)
+					{
+						setTrapFlag();
+						ContinueDebugEvent(debugEvent.dwProcessId, debugEvent.dwThreadId, DBG_CONTINUE);
+					}
 
 					break;
 				}
@@ -170,23 +177,47 @@ void DebuggerEngine::handleDebugEvent()
 					if (finishing)
 					{
 						finish();
-						handleDebugEvent();
-						return;
+						while(finishing)
+							handleDebugEvent(level+1);
 					}
-					break;
+					if (returning)
+					{
+						SmartHandle hT = getDebugEventsThread();
+						CONTEXT ctx = {};
+						ctx.ContextFlags = CONTEXT_ALL;
+
+						if (!GetThreadContext(hT.get(), &ctx))
+						{
+							debuggerMessage("GetThreadContext failed ", GetLastError());
+							return;
+						}
+
+						PVOID retAddress;
+						SIZE_T len;
+						if(!ReadProcessMemory(hProcess.get(), (LPCVOID)ctx.Rsp, &retAddress, sizeof(PVOID), &len))
+						{
+							debuggerMessage("ReadProcessMemory failed ", GetLastError());
+							return;
+						}
+						setBreakPoint(retAddress);
+						stepBreakpoint = retAddress;
+						continueExecution();
+						returning = false;
+					}
+					return;
 				}
 			}
-			exceptionEvent();
+			
 			break;
 		}
 		
 		case CREATE_THREAD_DEBUG_EVENT:
 		{
 			createThreadEvent();
-			continueIfState(busy);//TODO ???
+			continueIfState(busy);
 			break;
 		}
-		
+
 		case CREATE_PROCESS_DEBUG_EVENT:
 		{
 			createProcessEvent();
@@ -194,40 +225,42 @@ void DebuggerEngine::handleDebugEvent()
 			ContinueDebugEvent(debugEvent.dwProcessId, debugEvent.dwThreadId, DBG_CONTINUE);
 			break;
 		}
-		
+
 		case EXIT_THREAD_DEBUG_EVENT:
 		{
 			exitThreadEvent();
 			continueIfState(busy);
 			break;
 		}
-		
+
 		case EXIT_PROCESS_DEBUG_EVENT:
 		{
 			exitThreadEvent();
 			continueIfState(busy);
 			break;
 		}
-		
+
 		case LOAD_DLL_DEBUG_EVENT:
 		{
 			//loadDllEvent();
 			ContinueDebugEvent(debugEvent.dwProcessId, debugEvent.dwThreadId, DBG_CONTINUE);
 			break;
 		}
-		
+
 		case UNLOAD_DLL_DEBUG_EVENT:
 		{
 			unloadDllEvent();
 			continueIfState(busy);
 			break;
 		}
+
 		case OUTPUT_DEBUG_STRING_EVENT:
 		{
 			outputDebugStringEvent();
 			continueIfState(busy);
 			break;
 		}
+
 		case RIP_EVENT:
 		{
 			ripEvent();
@@ -420,6 +453,7 @@ void DebuggerEngine::finish() // doesnt work!!!
 	if (instruction.info.mnemonic == ZYDIS_MNEMONIC_RET)
 	{
 		finishing = false;
+		returning = true;
 		return;
 	}
 	else if (instruction.info.mnemonic == ZYDIS_MNEMONIC_CALL)
@@ -1683,9 +1717,9 @@ std::optional<std::string> DebuggerEngine::findFunctionSource(Dwarf_Unsigned off
 		if (lineNum >= lineRange.first && lineNum <= lineRange.second)
 		{
 			if (lineNum == addressLineNumber)
-				ret << "=> " << line << "\n";
+				ret << lineNum << " => " << line << "\n";
 			else
-				ret << "   " << line << "\n";
+				ret << lineNum << "    " << line << "\n";
 		}
 		lineNum++;
 	}

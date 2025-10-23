@@ -17,6 +17,7 @@ void debuggerLoop(CommandsEvalListener<T> &commandsEval)
 	std::string cmd;
 	while (true)
 	{
+		commandsEval.engine.handleDebugEvent();
 		if (!commandsEval.engine.isBusy())
 		{
 			commandPrompt();
@@ -49,7 +50,6 @@ void debuggerLoop(CommandsEvalListener<T> &commandsEval)
 				std::cerr << "Bad command format\n";
 			}
 		}
-		commandsEval.engine.handleDebugEvent();
 	}
 }
 

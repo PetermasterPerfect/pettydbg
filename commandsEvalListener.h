@@ -146,10 +146,12 @@ void CommandsEvalListener<T>::enterCommand0Arg(commandsParser::Command0ArgContex
 	case commandsParser::STEPINTO:
 		engine.stepIn();
 		break;
-	//case commandsLexer::FINISH:
-	//	engine.finish();
+	case commandsLexer::FINISH:
+		engine.finish();
+		break;
 	case commandsParser::REGISTERS:
 		engine.showGeneralPurposeRegisters();
+		break;
 	case commandsParser::BPOINTINFO:
 		engine.breakpointsInfo();
 		break;
