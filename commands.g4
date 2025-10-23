@@ -17,7 +17,8 @@ command1Arg: STACK (INT | HEXINT)
 	| DELBPOINT (INT | HEXINT) 
 	| BPOINT (INT | HEXINT)
 	| SYM (INT | HEXINT)
-	| PRINT STRING;
+	| PRINT STRING
+	| LL (INT | HEXINT);
 
 command2Arg: DISASSEMBLY (INT | HEXINT) (INT | HEXINT) ;
 
@@ -26,6 +27,7 @@ INT: [0-9]+;
 HEXINT: '0x' [0-9a-fA-F]+;
 SYM: 'sym';	
 LVAR: 'lvar';
+LL: 'll';
 CONTINUE: 'c';
 RESTART: 'r';
 THREADINFO: 'thinfo';

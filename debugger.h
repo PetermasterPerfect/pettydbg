@@ -69,7 +69,7 @@ public:
 	std::map<DWORD, SmartHandle> listActiveThreads();
 	void printLocal(std::string);
 	void showLocals();
-	void findFunctionSource(Dwarf_Unsigned);
+	std::optional<std::string> findCurrentSource(size_t);
 
 private:
 	struct Address2FunctionSymbol
@@ -148,6 +148,7 @@ private:
 	inline SmartHandle getDebugEventsThread() { return  std::move(listActiveThreads()[debugEvent.dwThreadId]);  }
 
 	void initDwarf();
+	void resetDwarf();
 	int findSubprogramInDieChain(Dwarf_Die, Address2FunctionSymbol&, int);
 	bool findSubprogramInCuChain(Address2FunctionSymbol&);
 
@@ -172,5 +173,7 @@ private:
 	std::optional<std::string> varNameWithAbstractOrigin(std::pair<Dwarf_Die, Dwarf_Die>);
 	Dwarf_Signed DebuggerEngine::findAddressLineIndex(Dwarf_Line*, Dwarf_Signed, size_t*, Address2FunctionSymbol&);
 
+	std::optional<std::string> findFunctionSource(Dwarf_Unsigned, size_t);
 	std::string correctWslPath(std::string);
+
 };

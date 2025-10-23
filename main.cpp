@@ -24,12 +24,30 @@ void debuggerLoop(CommandsEvalListener<T> &commandsEval)
 
 			ANTLRInputStream input(cmd);
 			commandsLexer lexer(&input);
+			LexerErrorListener lexerErrListener;
+			CommandsEvalErrorListener errListener;
+			std::shared_ptr<CommandsEvalErrorStrategy> handler = std::make_shared<CommandsEvalErrorStrategy>();
+			if (!handler)
+				throw std::runtime_error("Memory allocation failed");
+			lexer.removeErrorListeners();
+			lexer.addErrorListener(&lexerErrListener);
 			CommonTokenStream tokens(&lexer);
 			commandsParser parser(&tokens);
 
-			ParseTree* tree = parser.command();
-			ParseTreeWalker walker;
-			walker.walk(&commandsEval, tree);
+			parser.setErrorHandler(handler);
+			parser.removeErrorListeners();
+			parser.addErrorListener(&errListener);
+
+			try 
+			{
+				ParseTree* tree = parser.command();
+				ParseTreeWalker walker;
+				walker.walk(&commandsEval, tree);
+			}
+			catch (const std::runtime_error& e)
+			{
+				std::cerr << "Bad command format\n";
+			}
 		}
 		commandsEval.engine.handleDebugEvent();
 	}

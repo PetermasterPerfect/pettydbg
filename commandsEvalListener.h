@@ -7,6 +7,50 @@ using namespace antlr4::tree;
 
 extern DebuggerEngine* g_engine;
 
+class LexerErrorListener : public BaseErrorListener
+{
+	void syntaxError(Recognizer* recognizer, Token* offendingSymbol, size_t line, size_t charPositionInLine,
+		const std::string& msg, std::exception_ptr e)
+	{
+		throw std::runtime_error(msg);
+	}
+
+	void reportAmbiguity(Parser* recognizer, const dfa::DFA& dfa, size_t startIndex, size_t stopIndex, bool exact,
+		const antlrcpp::BitSet& ambigAlts, atn::ATNConfigSet* configs)
+	{
+		throw std::runtime_error("Ambiguity");
+	}
+};
+
+
+
+class CommandsEvalErrorListener : public BaseErrorListener
+{
+	void syntaxError(Recognizer* recognizer, Token* offendingSymbol, size_t line, size_t charPositionInLine,
+		const std::string& msg, std::exception_ptr e)
+	{
+
+	}
+};
+
+class CommandsEvalErrorStrategy : public DefaultErrorStrategy
+{
+	void recover(Parser* recognizer, std::exception_ptr e)
+	{
+		throw std::runtime_error("recover");
+	}
+
+	Token* recoverInline(Parser* recognizer)
+	{
+		throw std::runtime_error("recoverInline");
+	}
+
+	void sync(Parser* recognizer)
+	{
+	}
+};
+
+
 template <typename T>
 class CommandsEvalListener : public commandsBaseListener
 {
@@ -16,7 +60,7 @@ public:
 		g_engine = &engine;
 		SetConsoleCtrlHandler(registerSignals, TRUE);
 	};
-	friend class CommandsEvalListener;
+	//friend class CommandsEvalListener;
 	DebuggerEngine engine;
 
 private:
@@ -78,7 +122,8 @@ std::optional<std::string> CommandsEvalListener<T>::stringFromArgument(ParseTree
 template <typename T>
 void CommandsEvalListener<T>::enterCommand0Arg(commandsParser::Command0ArgContext* ctx)
 {
-
+	if (ctx->children.size() != 1)
+		return;
 	//ANTLRInputStream s("dsads");
 	auto type = ctx->start->getType();
 	switch (type)
@@ -117,6 +162,8 @@ void CommandsEvalListener<T>::enterCommand0Arg(commandsParser::Command0ArgContex
 template <typename T>
 void CommandsEvalListener<T>::enterCommand1Arg(commandsParser::Command1ArgContext* ctx)
 {
+	if (ctx->children.size() != 2)
+		return;
 	auto type = ctx->start->getType();
 	auto val = integerFromArgument(ctx->children[1]);
 	if (val)
@@ -124,14 +171,6 @@ void CommandsEvalListener<T>::enterCommand1Arg(commandsParser::Command1ArgContex
 		switch (type)
 		{
 		case commandsParser::SYM:
-			try
-			{
-				engine.findFunctionSource(val.value());
-			}
-			catch (const std::runtime_error& ex)
-			{
-				std::cerr << "sym search failed: " << ex.what() << "\n";
-			}
 			break;
 		case commandsParser::STACK:
 			engine.showStack(val.value());
@@ -139,6 +178,11 @@ void CommandsEvalListener<T>::enterCommand1Arg(commandsParser::Command1ArgContex
 			engine.deleteBreakpoint(reinterpret_cast<PVOID>(val.value()));
 		case commandsParser::BPOINT:
 			engine.setBreakPoint(reinterpret_cast<PVOID>(val.value()));
+			break;
+		case commandsParser::LL:
+			auto srcs = engine.findCurrentSource(val.value());
+			if(srcs)
+				std::cout << srcs.value();
 			break;
 		}
 	}
@@ -154,6 +198,9 @@ void CommandsEvalListener<T>::enterCommand1Arg(commandsParser::Command1ArgContex
 template <typename T>
 void CommandsEvalListener<T>::enterCommand2Arg(commandsParser::Command2ArgContext* ctx)
 {
+	if (ctx->children.size() != 3)
+		return;
+
 	auto type = ctx->start->getType();
 	size_t val[2] = {};
 

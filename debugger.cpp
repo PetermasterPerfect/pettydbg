@@ -1103,6 +1103,7 @@ std::pair<std::string, Dwarf_Unsigned> DebuggerEngine::matchFunctionSymbol(Dwarf
 
 bool DebuggerEngine::findSubprogramInCuChain(Address2FunctionSymbol& help)
 {
+	resetDwarf();
 	int res;
 	Dwarf_Unsigned cuHeaderLen = 0;
 	Dwarf_Unsigned abbrevOffset = 0;
@@ -1155,6 +1156,19 @@ void DebuggerEngine::initDwarf()
 		std::cerr << "dwarf_init no entry\n";
 		return;
 	}
+}
+
+void DebuggerEngine::resetDwarf()
+{
+	if (error)
+	{
+		if (dbg)
+			dwarf_dealloc_error(dbg, error);
+	}
+	if (dbg)
+		dwarf_finish(dbg);
+
+	initDwarf();
 }
 
 int DebuggerEngine::findSubprogramInDieChain(Dwarf_Die die, Address2FunctionSymbol& help, int level)
@@ -1307,6 +1321,7 @@ int DebuggerEngine::getHighOffset(Dwarf_Die die, Dwarf_Addr *lowpc, Dwarf_Addr *
 
 void DebuggerEngine::mapLocalVariables(Dwarf_Unsigned off)
 {
+	resetDwarf();
 	int res = DW_DLV_ERROR;
 	Address2Locals help(off);
 
@@ -1601,12 +1616,20 @@ void DebuggerEngine::showLocals()
 	}
 }
 
-void DebuggerEngine::findFunctionSource(Dwarf_Unsigned offset)
+std::optional<std::string> DebuggerEngine::findCurrentSource(size_t lines)
+{
+	EXCEPTION_DEBUG_INFO& exception = debugEvent.u.Exception;
+	PVOID breakAddr = exception.ExceptionRecord.ExceptionAddress;
+	Dwarf_Unsigned off = (Dwarf_Unsigned)breakAddr - (Dwarf_Unsigned)imageBase;
+	return findFunctionSource(off, lines);
+}
+
+std::optional<std::string> DebuggerEngine::findFunctionSource(Dwarf_Unsigned offset, size_t lines)
 {
 	Address2FunctionSymbol help(offset);
 
 	if (!findSubprogramInCuChain(help))
-		return;
+		return std::nullopt;
 
 	char** srcs = 0;
 	Dwarf_Unsigned version = 0;
@@ -1615,56 +1638,60 @@ void DebuggerEngine::findFunctionSource(Dwarf_Unsigned offset)
 
 	int res = dwarf_srclines_b(help.cuDie, &version, &tableCount, &context, &error);
 	if (res != DW_DLV_OK)
-		return;
+		return std::nullopt;
 
 	Dwarf_Line* lineBuf = 0;
 	Dwarf_Signed lineCount = 0;
 	res = dwarf_srclines_from_linecontext(context,
 		&lineBuf, &lineCount, &error);
 	if (res != DW_DLV_OK)
-		return;
+		return std::nullopt;
 
 	size_t addressLineNumber;
 	Dwarf_Signed idx = findAddressLineIndex(lineBuf, lineCount, &addressLineNumber, help);
 	if (idx == -1)
-		return;
+		return std::nullopt;
 
-	Dwarf_Signed startIdx = idx >= 5 ? idx - 5 : 0;
-	Dwarf_Signed endIdx = idx >= lineCount-6 ? lineCount-1 : idx+5;
+	lines = lines >= lineCount ? lineCount / 2 : lines/2;
+
+	Dwarf_Signed startIdx = idx >= lines ? idx - lines : 0;
+	Dwarf_Signed endIdx = idx >= lineCount-lines-1 ? lineCount-1 : idx+lines;
 
 	char* srcName = 0;
 	res = dwarf_linesrc(lineBuf[idx], &srcName, &error);
 	if (res != DW_DLV_OK)
-		return;
+		return std::nullopt;
 		
 	std::pair<size_t, size_t> lineRange;
 	res = dwarf_lineno(lineBuf[startIdx], &lineRange.first, &error);
 	if (res != DW_DLV_OK)
-		return;
+		return std::nullopt;
 
 	res = dwarf_lineno(lineBuf[endIdx], &lineRange.second, &error);
 	if (res != DW_DLV_OK)
-		return;
+		return std::nullopt;
 
 	std::ifstream file(correctWslPath(srcName));
 	if (!file)
-		return;
+		return std::nullopt;
 
 	std::string line;
+	std::stringstream ret;
 	size_t lineNum = 1;
 	while (std::getline(file, line))
 	{
 		if (lineNum >= lineRange.first && lineNum <= lineRange.second)
 		{
 			if (lineNum == addressLineNumber)
-				std::cout << "=> " << line << "\n";
+				ret << "=> " << line << "\n";
 			else
-				std::cout << "   " << line << "\n";
+				ret << "   " << line << "\n";
 		}
 		lineNum++;
 	}
-
-	return;
+	if (ret.str().size())
+		return ret.str();
+	return std::nullopt;
 }
 
 Dwarf_Signed DebuggerEngine::findAddressLineIndex(Dwarf_Line* lineBuf,
@@ -1672,10 +1699,11 @@ Dwarf_Signed DebuggerEngine::findAddressLineIndex(Dwarf_Line* lineBuf,
 {
 	size_t previous = 0;
 	Dwarf_Signed ret = -1;
-	for (Dwarf_Signed i = 0; i < lineCount; i++)
+	int res;
+	for (Dwarf_Signed i = 0; i < lineCount && ret == -1; i++)
 	{
 		Dwarf_Addr retAddr = 0;
-		int res = dwarf_lineaddr(lineBuf[i], &retAddr, &error);
+		res = dwarf_lineaddr(lineBuf[i], &retAddr, &error);
 		if (res != DW_DLV_OK)
 			continue;
 
@@ -1684,26 +1712,17 @@ Dwarf_Signed DebuggerEngine::findAddressLineIndex(Dwarf_Line* lineBuf,
 		if (i)
 		{
 			if (offset == help.offset)
-			{
 				ret = i;
-				break;
-			}
 			else if (help.offset > previous && help.offset < offset)
-			{
 				ret = i - 1;
-				break;
-			}
 		}
 		else if (offset == help.offset)
-		{
 			ret = 0;
-			break;
-		}
 
 		previous = offset;
 	}
-
-	int res = dwarf_lineno(lineBuf[ret], lineNum, &error);
+	if(ret != -1)
+		res = dwarf_lineno(lineBuf[ret], lineNum, &error);
 	if (res != DW_DLV_OK)
 		return -1;
 	return ret;
