@@ -23,7 +23,7 @@ RET:
 	return TRUE;
 }
 
-DebuggerEngine::DebuggerEngine(wchar_t *cmd)
+DebuggerEngine::DebuggerEngine(const wchar_t *cmd)
 {
 	hProcess = startup(cmd);
 	if(hProcess == NULL)
@@ -75,25 +75,6 @@ template <typename T> std::string DebuggerEngine::asHex(T num)
 	std::stringstream sstream;
 	sstream << "0x" << std::hex << num;
 	return sstream.str();
-}
-
-
-size_t DebuggerEngine::fromHex(std::string str)
-{
-	size_t x;
-	std::stringstream ss;
-	ss << std::hex << str;
-	ss >> x;
-	return x;
-}
-
-std::string DebuggerEngine::argumentAsHex(std::string arg)
-{
-	std::string potentialAddr = arg;
-	if(potentialAddr.substr(0, 2) == "0x")
-		potentialAddr = potentialAddr.substr(2, std::string::npos);
-
-	return potentialAddr;
 }
 
  void DebuggerEngine::handleDebugEvent(unsigned level)
@@ -751,6 +732,8 @@ void DebuggerEngine::sketchMemoryTest()
 
 void DebuggerEngine::exceptionEvent()
 {
+	if (finishing)
+		return;
 	EXCEPTION_RECORD *exceptionRecord = &debugEvent.u.Exception.ExceptionRecord;
 	PVOID addr = exceptionRecord->ExceptionAddress;
 	state = halt;
@@ -1180,14 +1163,9 @@ void DebuggerEngine::initDwarf()
 	Dwarf_Ptr errarg = 0;
 	int res = dwarf_init_path(getFullExecPath().get(), realpath, MAX_PATH,
 		DW_GROUPNUMBER_ANY, errhand, errarg, &dbg, &error);
-	if (res == DW_DLV_ERROR)
+	if (res != DW_DLV_OK)
 	{
-		std::cerr << "dwarf_init failed\n";
-		return;
-	}
-	if (res == DW_DLV_NO_ENTRY)
-	{
-		std::cerr << "dwarf_init no entry\n";
+		std::cerr << "No debugging symbols found.\n";
 		return;
 	}
 }

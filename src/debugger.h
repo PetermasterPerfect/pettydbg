@@ -42,7 +42,7 @@ using SmartHandle = std::unique_ptr<void, SmartHandleDeleter>;
 class DebuggerEngine
 {
 public:
-	DebuggerEngine(wchar_t *);
+	DebuggerEngine(const wchar_t *);
 	DebuggerEngine(DWORD pid);
 	~DebuggerEngine();
 
@@ -116,10 +116,8 @@ private:
 	
 	template<class... Args> void debuggerMessage(Args ...);
 	template <typename T> std::string asHex(T);
-	size_t fromHex(std::string);
 	std::string memStateAsString(DWORD);
 	std::string memTypeAsString(DWORD);
-	std::string argumentAsHex(std::string);
 	
 	void exceptionEvent();
 	void createThreadEvent();

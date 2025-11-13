@@ -11,14 +11,15 @@ command0Arg: CONTINUE
 	| FINISH 
 	| REGISTERS 
 	| BPOINTINFO
-	| LVAR;
+	| LVAR
+	| EXIT;
 
 command1Arg: STACK (INT | HEXINT) 
 	| DELBPOINT (INT | HEXINT) 
 	| BPOINT (INT | HEXINT)
 	| SYM (INT | HEXINT)
 	| PRINT STRING
-	| LL (INT | HEXINT);
+	| LL (INT | HEXINT)?;
 
 command2Arg: DISASSEMBLY (INT | HEXINT) (INT | HEXINT) ;
 
@@ -42,6 +43,7 @@ BPOINT: 'bp';
 DELBPOINT: 'delbp';
 BPOINTINFO: 'bpinfo';
 DISASSEMBLY: 'dis';
+EXIT: 'exit';
 NEWLINE: '\r'? '\n';
 WS : [ \t]+ -> skip ;
 STRING: [a-zA-Z][a-zA-Z0-9]*;

@@ -1,15 +1,11 @@
 #include "commandsEvalListener.h"
 #include "commandsLexer.h"
-#include <string>
-#include <thread>
-#define TEST 1
 #include "dwarf.h"
 #include "libdwarf.h"
-
-void commandPrompt()
-{
-	std::cout << ">>> ";
-}
+#include <string>
+#include <thread>
+#include <locale>
+#include <codecvt>
 
 template <typename T>
 void debuggerLoop(CommandsEvalListener<T> &commandsEval)
@@ -20,9 +16,11 @@ void debuggerLoop(CommandsEvalListener<T> &commandsEval)
 		commandsEval.engine.handleDebugEvent();
 		if (!commandsEval.engine.isBusy())
 		{
-			commandPrompt();
-			std::getline(std::cin, cmd);
-
+			do
+			{
+				std::cout << ">>> ";
+			} while (!std::getline(std::cin, cmd));
+					
 			ANTLRInputStream input(cmd);
 			commandsLexer lexer(&input);
 			LexerErrorListener lexerErrListener;
@@ -54,46 +52,52 @@ void debuggerLoop(CommandsEvalListener<T> &commandsEval)
 }
 
 /*
-***
 VERY IMPORTANT
-	cmd parameter which is used later on to restart debugged process
-	MUST BE QUOTED !!!
+	The cmd parameter used to restart the debugged process MUST be quoted!
 	It could be double, triple  quoted etc.
-	(e.g """app.exe""" runs correctly) so
-	if user gives as an argument cmd, it should make sure its quoted
-***
+	(e.g """app.exe""" runs correctly)
+	So if user gives as an argument cmd, we should make sure its quoted.
 */
-
 
 int main(int argc, char** argv)
 {
 	DebugSetProcessKillOnExit(TRUE);
-#ifdef TEST
-	wchar_t* cmd = new wchar_t[0x20];
-	wcscpy(cmd, L"\"C:\\Users\\LENOVO\\test1.exe\"");
-
-	CommandsEvalListener<wchar_t*> commandsEval(cmd);
-	debuggerLoop<wchar_t*>(commandsEval);
-#else
-
 	if (argc < 2)
 	{
-		fprintf(stderr, "USAGE dbg.exe <app_name.exe>/-p <PID>\n");
+		std::cerr << "USAGE dbg.exe <app_name.exe>/-p <PID>\n";
 		return 3;
 	}
 
 	if (std::string(argv[1]) == "-p")
-		dbg = new Debugger(std::stoi(argv[2]));
+	{
+		try
+		{
+			DWORD pid = std::stol(argv[2]);
+			CommandsEvalListener<DWORD> commandsEval(pid);
+			debuggerLoop<DWORD>(commandsEval);
+		}
+		catch (const std::invalid_argument& e)
+		{
+			std::cerr << "Invalid process id argument. Not a valid number.\n";
+		}
+		catch (const std::out_of_range& e)
+		{
+			std::cerr << "Invalid process id argument. Out of range.\n";
+		}
+	}
 	else
 	{
-		const size_t cSize = strlen(argv[1]) + 1 + 2; // +2 is needed to adds quotes
+		/*const size_t cSize = strlen(argv[1]) + 1 + 2; // +2 is needed to adds quotes
 		wchar_t* wc = new wchar_t[cSize];
 		wc[0] = L'\"';
 		mbstowcs(&wc[1], argv[1], cSize - 2);
-		wc[cSize - 2] = L'\"';
-		dbg = new Debugger(wc);
+		wc[cSize - 2] = L'\"';*/
+		std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>> converter;
+		std::string buf(argv[1]);
+		std::wstring cmd = L"\"" + converter.from_bytes(buf) + L"\"";
+		CommandsEvalListener<const wchar_t*> commandsEval(cmd.c_str());
+		debuggerLoop<const wchar_t*>(commandsEval);
 	}
-	dbg->enterDebuggerLoop();
-#endif
 
+	return 0;
 }
