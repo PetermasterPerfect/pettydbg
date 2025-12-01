@@ -519,29 +519,18 @@ void DebuggerEngine::restart()
 		return;
 	}
 
-	if(state == halt)
-	{
-		ContinueDebugEvent(debugEvent.dwProcessId, debugEvent.dwThreadId, DBG_CONTINUE);
-		state = busy;
-	}
-	else
-	{
-		std::unique_ptr <RTL_USER_PROCESS_PARAMETERS> procParams = loadProcessParameters();
-		if(procParams == nullptr)
-			return;
+	std::unique_ptr <RTL_USER_PROCESS_PARAMETERS> procParams = loadProcessParameters();
+	if(procParams == nullptr)
+		return;
 
-		UnicodeStringEx cmd(hProcess.get(), &procParams->CommandLine);
-		// wchar_t cwdBuf[0x300];
-		// UnicodeStringEx cwd(hProcess.get(), &procParams->CurrentDirectoryPath);
+	UnicodeStringEx cmd(hProcess.get(), &procParams->CommandLine);
+	TerminateProcess(hProcess.get(), 33);
+	WaitForSingleObject(hProcess.get(), 100);
 
-		TerminateProcess(hProcess.get(), 33);
-		WaitForSingleObject(hProcess.get(), 100);
-
-		hProcess = startup(cmd.realUnicode.Buffer);
-		state = halt;
-		firstBreakpoint = true;
-		lastBreakpoint = nullptr;
-	}
+	hProcess = startup(cmd.realUnicode.Buffer);
+	state = halt;
+	firstBreakpoint = true;
+	lastBreakpoint = nullptr;
 }
 
 void DebuggerEngine::breakSignal()
@@ -1164,10 +1153,7 @@ void DebuggerEngine::initDwarf()
 	int res = dwarf_init_path(getFullExecPath().get(), realpath, MAX_PATH,
 		DW_GROUPNUMBER_ANY, errhand, errarg, &dbg, &error);
 	if (res != DW_DLV_OK)
-	{
 		std::cerr << "No debugging symbols found.\n";
-		return;
-	}
 }
 
 void DebuggerEngine::resetDwarf()
