@@ -193,7 +193,11 @@ void CommandsEvalListener<T>::enterCommand1Arg(commandsParser::Command1ArgContex
 	{
 		auto name = stringFromArgument(ctx->children[1]);
 		if (name)
-			engine.printLocal(name.value());
+		{
+			if (name.value().size() == 1)
+				return;
+			engine.printLocal(name.value().substr(1));
+		}
 	}
 
 }
