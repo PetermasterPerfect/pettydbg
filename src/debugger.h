@@ -90,7 +90,6 @@ private:
 		Address2Locals(Dwarf_Unsigned off) : offset(off) {}
 	};
 
-	//TODO: clean up mess with process handle process id and PROCESS_INFORMATION structure
 	Dwarf_Debug dbg;
 	Dwarf_Error error = 0;
 
@@ -113,7 +112,7 @@ private:
 
 	SmartHandle startup(const wchar_t*);
 	void continueIfState(states);
-	
+	void debuggerInit();
 	template<class... Args> void debuggerMessage(Args ...);
 	template <typename T> std::string asHex(T);
 	std::string memStateAsString(DWORD);

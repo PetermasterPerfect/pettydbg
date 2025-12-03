@@ -27,13 +27,12 @@ DebuggerEngine::DebuggerEngine(const wchar_t *cmd)
 {
 	hProcess = startup(cmd);
 	if(hProcess == NULL)
-		fprintf(stderr, "startup failed [%lx]\n", GetLastError());
+		throw std::runtime_error("Cannot start process\n");
 
 	printf("Running %ls with id %i\n", cmd, GetProcessId(hProcess.get()));
+	firstBreakpoint = true;
 	isAttached = false;
-	imageBase = getImageBase();
-	loadPeNtHeader();
-	initDwarf();
+	debuggerInit();
 }
 
 DebuggerEngine::DebuggerEngine(DWORD pid)
@@ -48,9 +47,7 @@ DebuggerEngine::DebuggerEngine(DWORD pid)
 	debuggerMessage("Attaching to process with id ", pid);
 	processId = pid;
 	isAttached = true;
-	imageBase = getImageBase();
-	loadPeNtHeader();
-	initDwarf();
+	debuggerInit();
 }
 
 DebuggerEngine::~DebuggerEngine()
@@ -62,6 +59,13 @@ DebuggerEngine::~DebuggerEngine()
 	}
 	if(dbg)
 		dwarf_finish(dbg);
+}
+
+void DebuggerEngine::debuggerInit()
+{
+	imageBase = getImageBase();
+	loadPeNtHeader();
+	initDwarf();
 }
 
 template<class... Args> void DebuggerEngine::debuggerMessage(Args... args)

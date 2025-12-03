@@ -84,19 +84,26 @@ int main(int argc, char** argv)
 		{
 			std::cerr << "Invalid process id argument. Out of range.\n";
 		}
+		catch (const std::runtime_error& e)
+		{
+			std::cerr << "Cannot attach debugger\n";
+		}
 	}
 	else
 	{
-		/*const size_t cSize = strlen(argv[1]) + 1 + 2; // +2 is needed to adds quotes
-		wchar_t* wc = new wchar_t[cSize];
-		wc[0] = L'\"';
-		mbstowcs(&wc[1], argv[1], cSize - 2);
-		wc[cSize - 2] = L'\"';*/
 		std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>> converter;
 		std::string buf(argv[1]);
 		std::wstring cmd = L"\"" + converter.from_bytes(buf) + L"\"";
-		CommandsEvalListener<const wchar_t*> commandsEval(cmd.c_str());
-		debuggerLoop<const wchar_t*>(commandsEval);
+		try
+		{
+			CommandsEvalListener<const wchar_t*> commandsEval(cmd.c_str());
+			debuggerLoop<const wchar_t*>(commandsEval);
+		}
+		catch (const std::runtime_error& e)
+		{
+			std::cerr << "Cannot continue debugging\n";
+		}
+		
 	}
 
 	return 0;
