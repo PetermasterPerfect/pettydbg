@@ -90,7 +90,6 @@ template <typename T> std::string DebuggerEngine::asHex(T num)
 				exceptionEvent();
 			EXCEPTION_DEBUG_INFO& exception = debugEvent.u.Exception;
 			PVOID breakAddr = exception.ExceptionRecord.ExceptionAddress;
-			updateLocalVariables((size_t)breakAddr);
 			switch( exception.ExceptionRecord.ExceptionCode)
 			{
 				case STATUS_BREAKPOINT:
@@ -1585,6 +1584,7 @@ void DebuggerEngine::printLocal(std::string varName)
 	EXCEPTION_DEBUG_INFO& exception = debugEvent.u.Exception;
 	PVOID breakAddr = exception.ExceptionRecord.ExceptionAddress;
 	size_t addr = ntHdr.OptionalHeader.ImageBase + (size_t)breakAddr - (size_t)imageBase;
+	updateLocalVariables((size_t)breakAddr);
 	for (auto x : localVariables)
 	{
 		if (x->symbolName == varName)
