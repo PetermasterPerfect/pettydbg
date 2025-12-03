@@ -49,14 +49,16 @@ public:
 	bool isBusy() const { return state == busy; };
 	friend BOOL WINAPI registerSignals(DWORD);
 
-	void  handleDebugEvent(unsigned level=0);
+
+	void exit();
+	void handleDebugEvent(unsigned level=0);
 	void continueExecution();
 	void restart();
 	void breakSignal();
 	void threadsInfo();
 	void memoryMappingInfo();
 	void disassembly(PVOID, SIZE_T);
-	void setBreakPoint(PVOID);
+	void setBreakPoint(PVOID, bool temp=false);
 	void stepOver();
 	void stepIn();
 	void finish();
@@ -105,7 +107,7 @@ private:
 	bool finishing = false;
 	bool returning = false;
 	std::map<PVOID, BYTE> breakpoints;
-	PVOID stepBreakpoint = nullptr;
+	std::pair<PVOID, BYTE> tempBreakpoint;
 	PVOID lastBreakpoint = nullptr;
 	bool continueTrap = false;
 	std::vector<std::shared_ptr<SymbolObject>> localVariables;
@@ -138,6 +140,7 @@ private:
 	std::map<PVOID, std::string> sketchModulesSections(PVOID, std::string);
 	void sketchMemoryTest();
 	void replaceInt3(PVOID, BYTE*, SIZE_T);
+	void deleteTempBreakpoint();
 	
 	PVOID getImageBase();
 	void loadPeNtHeader();

@@ -1,4 +1,5 @@
 #include "debugger.h"
+#include <cstdlib>
 
 DebuggerEngine* g_engine;
 
@@ -107,7 +108,7 @@ template <typename T> std::string DebuggerEngine::asHex(T num)
 
 						firstBreakpoint = false;
 					}
-					if(breakpoints.find(breakAddr) != breakpoints.end())
+					if(breakpoints.find(breakAddr) != breakpoints.end() || tempBreakpoint.first)
 					{
 						SmartHandle hT = getDebugEventsThread();
 						if(!hT)
@@ -129,10 +130,11 @@ template <typename T> std::string DebuggerEngine::asHex(T num)
 						}
 					}
 
-					if(stepBreakpoint != nullptr)
+					if(tempBreakpoint.first != nullptr)
 					{
-						deleteBreakpoint(stepBreakpoint);
-						stepBreakpoint = nullptr;
+						if(breakpoints.find(tempBreakpoint.first) == breakpoints.end())
+							deleteTempBreakpoint();
+						tempBreakpoint.first = nullptr;
 					}
 					if (finishing)
 					{
@@ -146,9 +148,13 @@ template <typename T> std::string DebuggerEngine::asHex(T num)
 				{
 					if(lastBreakpoint != nullptr)
 					{
-						BYTE int3 = 0xcc;
-						if(!WriteProcessMemory(hProcess.get(), lastBreakpoint, &int3, sizeof(BYTE), NULL))
-							debuggerMessage("EXCEPTION_SINGLE_STEP WriteProcessMemory failed ", GetLastError());
+					
+						if (breakpoints.find(lastBreakpoint) != breakpoints.end())
+						{
+							BYTE int3 = 0xcc;
+							if (!WriteProcessMemory(hProcess.get(), lastBreakpoint, &int3, sizeof(BYTE), NULL))
+								debuggerMessage("EXCEPTION_SINGLE_STEP WriteProcessMemory failed ", GetLastError());
+						}
 						lastBreakpoint = nullptr;
 						if(continueTrap)
 						{
@@ -183,8 +189,7 @@ template <typename T> std::string DebuggerEngine::asHex(T num)
 							debuggerMessage("ReadProcessMemory failed ", GetLastError());
 							return;
 						}
-						setBreakPoint(retAddress);
-						stepBreakpoint = retAddress;
+						setBreakPoint(retAddress, true);
 						continueExecution();
 						returning = false;
 					}
@@ -283,6 +288,11 @@ void DebuggerEngine::showStack(SIZE_T sz)
 		debuggerMessage((PVOID)((SIZE_T)stackAddr+sizeof(SIZE_T)*i), "\t", stackToView[i]);
 }
 
+void DebuggerEngine::exit()
+{
+	std::exit(0);
+}
+
 void DebuggerEngine::showGeneralPurposeRegisters()
 {
 	SmartHandle hT = getDebugEventsThread();
@@ -372,7 +382,10 @@ void DebuggerEngine::disassembly(PVOID addr, SIZE_T sz)
 	}
 }
 
-void DebuggerEngine::stepOver() // doesnt work!!!
+
+
+
+void DebuggerEngine::stepOver()
 {
 	EXCEPTION_RECORD* exceptionRecord = &debugEvent.u.Exception.ExceptionRecord;
 	PVOID addr = exceptionRecord->ExceptionAddress;
@@ -399,8 +412,7 @@ void DebuggerEngine::stepOver() // doesnt work!!!
 	if (instruction.info.mnemonic == ZYDIS_MNEMONIC_CALL)
 	{
 		PVOID bpBuf = reinterpret_cast<PVOID>(reinterpret_cast<size_t>(addr) + static_cast<size_t>(instruction.info.length));
-		setBreakPoint(bpBuf); // TODO: delete this breakpoint
-		stepBreakpoint = bpBuf;
+		setBreakPoint(bpBuf, true);
 		continueExecution();
 		return;
 	}
@@ -408,9 +420,7 @@ void DebuggerEngine::stepOver() // doesnt work!!!
 	ContinueDebugEvent(debugEvent.dwProcessId, debugEvent.dwThreadId, DBG_CONTINUE);
 }
 
-
-
-void DebuggerEngine::finish() // doesnt work!!!
+void DebuggerEngine::finish()
 {
 	EXCEPTION_RECORD* exceptionRecord = &debugEvent.u.Exception.ExceptionRecord;
 	PVOID addr = exceptionRecord->ExceptionAddress;
@@ -444,8 +454,7 @@ void DebuggerEngine::finish() // doesnt work!!!
 	{
 
 		PVOID bpBuf = reinterpret_cast<PVOID>(reinterpret_cast<size_t>(addr) + static_cast<size_t>(instruction.info.length));
-		setBreakPoint(bpBuf);
-		stepBreakpoint = bpBuf;
+		setBreakPoint(bpBuf, true);
 		continueExecution();
 		return;
 	}
@@ -459,7 +468,16 @@ void DebuggerEngine::stepIn()
 	ContinueDebugEvent(debugEvent.dwProcessId, debugEvent.dwThreadId, DBG_CONTINUE);
 }
 
-void DebuggerEngine::setBreakPoint(PVOID breakAddr)
+void DebuggerEngine::deleteTempBreakpoint()
+{
+	if (!WriteProcessMemory(hProcess.get(), tempBreakpoint.first, &tempBreakpoint.second, sizeof(BYTE), NULL))
+	{
+		debuggerMessage("deleteTempBreakpoint WriteProcessMemory failed ", GetLastError());
+		return;
+	}
+}
+
+void DebuggerEngine::setBreakPoint(PVOID breakAddr, bool temp)
 {
 	BYTE buf, int3;
 	MEMORY_BASIC_INFORMATION memInfo;
@@ -489,7 +507,11 @@ void DebuggerEngine::setBreakPoint(PVOID breakAddr)
 		return;
 	}
 
-	breakpoints[breakAddr] = buf;
+	if(temp)
+		tempBreakpoint = std::make_pair(breakAddr, buf);
+	else
+		breakpoints[breakAddr] = buf;
+
 	int3 = 0xcc;
 
 	if(!WriteProcessMemory(hProcess.get(), breakAddr, &int3, sizeof(BYTE), NULL))
@@ -513,7 +535,6 @@ void DebuggerEngine::continueExecution()
 
 
 //TODO: implement changing directory when restarting debuggee
-// but why??
 void DebuggerEngine::restart()
 {
 	if(isAttached)
@@ -821,6 +842,7 @@ SmartHandle DebuggerEngine::startup(const wchar_t *cmdLine)
     	debuggerMessage("CreateProcessW failed ", GetLastError());
 
 	processId = procInfo.dwProcessId;
+	CloseHandle(procInfo.hThread);
     return SmartHandle(procInfo.hProcess);
 }
 
@@ -997,7 +1019,7 @@ void DebuggerEngine::deleteBreakpoint(PVOID addr)
 	}
 	if(breakpoints.find(addr) == breakpoints.end())
 	{
-		debuggerMessage("Not breakpoint at address ", addr);
+		debuggerMessage("No breakpoint at address ", addr);
 		return;
 	}
 
@@ -1701,7 +1723,7 @@ Dwarf_Signed DebuggerEngine::findAddressLineIndex(Dwarf_Line* lineBuf,
 {
 	size_t previous = 0;
 	Dwarf_Signed ret = -1;
-	int res;
+	int res = DW_DLV_ERROR;
 	for (Dwarf_Signed i = 0; i < lineCount && ret == -1; i++)
 	{
 		Dwarf_Addr retAddr = 0;

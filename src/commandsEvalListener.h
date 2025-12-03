@@ -128,6 +128,9 @@ void CommandsEvalListener<T>::enterCommand0Arg(commandsParser::Command0ArgContex
 	auto type = ctx->start->getType();
 	switch (type)
 	{
+	case commandsParser::EXIT:
+		engine.exit();
+		break;
 	case commandsParser::CONTINUE:
 		engine.continueExecution();
 		break;
