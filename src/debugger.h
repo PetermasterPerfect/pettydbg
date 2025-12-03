@@ -49,7 +49,9 @@ public:
 	bool isBusy() const { return state == busy; };
 	friend BOOL WINAPI registerSignals(DWORD);
 
-	void  handleDebugEvent(unsigned level=0);
+
+	void exit();
+	void handleDebugEvent(unsigned level=0);
 	void continueExecution();
 	void restart();
 	void breakSignal();

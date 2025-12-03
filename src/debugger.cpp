@@ -1,4 +1,5 @@
 #include "debugger.h"
+#include <cstdlib>
 
 DebuggerEngine* g_engine;
 
@@ -146,9 +147,6 @@ template <typename T> std::string DebuggerEngine::asHex(T num)
 				{
 					if(lastBreakpoint != nullptr)
 					{
-						BYTE int3 = 0xcc;
-						if(!WriteProcessMemory(hProcess.get(), lastBreakpoint, &int3, sizeof(BYTE), NULL))
-							debuggerMessage("EXCEPTION_SINGLE_STEP WriteProcessMemory failed ", GetLastError());
 						lastBreakpoint = nullptr;
 						if(continueTrap)
 						{
@@ -283,6 +281,11 @@ void DebuggerEngine::showStack(SIZE_T sz)
 		debuggerMessage((PVOID)((SIZE_T)stackAddr+sizeof(SIZE_T)*i), "\t", stackToView[i]);
 }
 
+void DebuggerEngine::exit()
+{
+	std::exit(0);
+}
+
 void DebuggerEngine::showGeneralPurposeRegisters()
 {
 	SmartHandle hT = getDebugEventsThread();
@@ -372,7 +375,10 @@ void DebuggerEngine::disassembly(PVOID addr, SIZE_T sz)
 	}
 }
 
-void DebuggerEngine::stepOver() // doesnt work!!!
+
+
+
+void DebuggerEngine::stepOver()
 {
 	EXCEPTION_RECORD* exceptionRecord = &debugEvent.u.Exception.ExceptionRecord;
 	PVOID addr = exceptionRecord->ExceptionAddress;
@@ -408,9 +414,7 @@ void DebuggerEngine::stepOver() // doesnt work!!!
 	ContinueDebugEvent(debugEvent.dwProcessId, debugEvent.dwThreadId, DBG_CONTINUE);
 }
 
-
-
-void DebuggerEngine::finish() // doesnt work!!!
+void DebuggerEngine::finish()
 {
 	EXCEPTION_RECORD* exceptionRecord = &debugEvent.u.Exception.ExceptionRecord;
 	PVOID addr = exceptionRecord->ExceptionAddress;
