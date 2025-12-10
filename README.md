@@ -142,5 +142,7 @@ I compiled this code with following command:
 gcc test.c -o test.exe -g
 ```
 
-Demo:
-![demo](https://media3.giphy.com/media/v1.Y2lkPTc5MGI3NjExZGI1M2o3YzB0M21nYnV6ZmYwcXJsMGt5czJ6YnljaTkyN282bnNxNyZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/RpGIkbiNGretG7Cbnz/giphy.gif)
+Demo (click to watch demo video on youtube):
+
+
+[![DEMO](https://img.youtube.com/vi/hklohHHl2c8/0.jpg)](https://www.youtube.com/watch?v=hklohHHl2c8)
