@@ -1,12 +1,12 @@
 #include "symbolObject.h"
 #include "dwarfInterp.h"
 
-VariableObject::VariableObject(HANDLE hProcess, Dwarf_Debug dbg, Dwarf_Loc_Head_c loclist, Dwarf_Unsigned count,  Dwarf_Die subprog, Dwarf_Error error, std::string name) :
-	hProcess(hProcess), dbg(dbg), loclist(loclist), error(error), SymbolObject(name), subprogram(subprog)
+VariableObject::VariableObject(IDebugBackend* backend, Dwarf_Debug dbg, Dwarf_Loc_Head_c loclist, Dwarf_Unsigned count, Dwarf_Die subprog, Dwarf_Error error, std::string name) :
+	backend(backend), dbg(dbg), loclist(loclist), error(error), SymbolObject(name), subprogram(subprog)
 {
 	Dwarf_Locdesc_c entry = 0;
 	Dwarf_Small op = 0;
-	for (int i = 0; i < count; ++i)
+	for (Dwarf_Unsigned i = 0; i < count; ++i)
 	{
 		Dwarf_Small loclistKind = 0;
 		Dwarf_Small lleValue = 0;
@@ -46,7 +46,6 @@ VariableObject::VariableObject(HANDLE hProcess, Dwarf_Debug dbg, Dwarf_Loc_Head_
 				res2 = dwarf_highpc_b(subprogram, &hipc, &form, &formclass, &error);
 				if (res2 == DW_DLV_OK && formclass == DW_FORM_CLASS_CONSTANT)
 					hipc += lopc;
-
 			}
 			else if (res == DW_DLV_ERROR || res2 == DW_DLV_ERROR)
 				throw std::runtime_error("Symbol object constructor failed");
@@ -56,37 +55,38 @@ VariableObject::VariableObject(HANDLE hProcess, Dwarf_Debug dbg, Dwarf_Loc_Head_
 		if (!buf)
 			return;
 		locations.push_back(buf);
-
 	}
-	if (name.size())
+	if (!name.empty())
 		cfa = loadCfa();
 }
 
-std::unique_ptr<VariableObject>  VariableObject::loadCfa()
+std::unique_ptr<VariableObject> VariableObject::loadCfa()
 {
 	Dwarf_Attribute frame;
-	Dwarf_Error error;
-	int res = dwarf_attr(subprogram, DW_AT_frame_base, &frame, &error);
+	Dwarf_Error err = 0;
+	int res = dwarf_attr(subprogram, DW_AT_frame_base, &frame, &err);
 	if (res == DW_DLV_NO_ENTRY)
 		return nullptr;
 
-	Dwarf_Loc_Head_c loclist = 0;
-	Dwarf_Unsigned count = 0;
+	Dwarf_Loc_Head_c locl = 0;
+	Dwarf_Unsigned cnt = 0;
 
-	res = dwarf_get_loclist_c(frame, &loclist, &count, &error);
+	res = dwarf_get_loclist_c(frame, &locl, &cnt, &err);
 	if (res != DW_DLV_OK)
 		return nullptr;
 
-	auto ret = std::make_unique<VariableObject>(hProcess, dbg, loclist, count, subprogram, error);
+	auto ret = std::make_unique<VariableObject>(backend, dbg, locl, cnt, subprogram, err);
 	return ret;
 }
 
-std::optional<size_t> VariableObject::value(HANDLE hThread, size_t addr)
+std::optional<size_t> VariableObject::value(uint64_t tid, size_t addr)
 {
 	std::shared_ptr<Location> loc = nullptr;
 	for (auto x : locations)
+	{
 		if (x->inRange(addr))
 			loc = x;
+	}
 
 	if (!loc)
 		return std::nullopt;
@@ -100,13 +100,13 @@ std::optional<size_t> VariableObject::value(HANDLE hThread, size_t addr)
 		Dwarf_Unsigned opd2 = 0;
 		Dwarf_Unsigned opd3 = 0;
 		Dwarf_Unsigned offsetforbranch = 0;
-		Dwarf_Error error = 0;
+		Dwarf_Error err = 0;
 
 		int opres = dwarf_get_location_op_value_c(
 			loc->lockDescEntry, j, &op,
 			&opd1, &opd2, &opd3,
 			&offsetforbranch,
-			&error);
+			&err);
 
 		if (opres != DW_DLV_OK)
 			return std::nullopt;
@@ -114,30 +114,34 @@ std::optional<size_t> VariableObject::value(HANDLE hThread, size_t addr)
 		switch (op)
 		{
 		DW_CASES_REG0_TO_15
-			return valueFromRegister(hThread, op);
+			return valueFromRegister(tid, op);
 		DW_CASES_LIT0_TO_15
 			stack.push_back(op - DW_OP_lit0);
 			break;
 		case DW_OP_stack_value:
-			if (stack.size())
+			if (!stack.empty())
 				return stack.back();
-			else 
+			else
 				return std::nullopt;
 		case DW_OP_call_frame_cfa:
-			return cfaFromFde(hThread, addr);
+			return cfaFromFde(tid, addr);
 		case DW_OP_fbreg:
 			if (cfa)
 			{
-				auto varAddress = cfa->value(hThread, addr).value() + opd1;
-				stack.push_back(readVarFromMemory((PVOID)varAddress));
+				auto valOpt = cfa->value(tid, addr);
+				if (!valOpt)
+					return std::nullopt;
+				auto varAddress = valOpt.value() + opd1;
+				stack.push_back(readVarFromMemory(varAddress));
 			}
 			else
 				throw std::runtime_error("No cfa in subprogram\n");
-		default: 
+			break;
+		default:
 			break;
 		}
 	}
-	if (stack.size())
+	if (!stack.empty())
 		return stack.back();
 	return std::nullopt;
 }
@@ -145,12 +149,14 @@ std::optional<size_t> VariableObject::value(HANDLE hThread, size_t addr)
 bool VariableObject::inRange(size_t addr)
 {
 	for (auto x : locations)
+	{
 		if (x->inRange(addr))
 			return true;
+	}
 	return false;
 }
 
-std::optional<size_t> VariableObject::cfaFromFde(HANDLE hThread, size_t addr)
+std::optional<size_t> VariableObject::cfaFromFde(uint64_t tid, size_t addr)
 {
 	Dwarf_Cie* cieData = 0;
 	Dwarf_Signed cieCount = 0;
@@ -175,8 +181,8 @@ std::optional<size_t> VariableObject::cfaFromFde(HANDLE hThread, size_t addr)
 	Dwarf_Addr rowPc = 0;
 	Dwarf_Bool moreRows = 0;
 	Dwarf_Addr subPc = 0;
-	Dwarf_Unsigned reg;
-	Dwarf_Signed cfaOffset;
+	Dwarf_Unsigned reg = 0;
+	Dwarf_Signed cfaOffset = 0;
 	do
 	{
 		if (subPc)
@@ -189,46 +195,53 @@ std::optional<size_t> VariableObject::cfaFromFde(HANDLE hThread, size_t addr)
 	if (res != DW_DLV_OK)
 		return std::nullopt;
 
-	return valueFromRegister(hThread, reg + DW_OP_reg0).value() + (offsetRel ? cfaOffset : 0);
+	auto regVal = valueFromRegister(tid, reg + DW_OP_reg0);
+	if (!regVal)
+		return std::nullopt;
+
+	return regVal.value() + (offsetRel ? cfaOffset : 0);
 }
 
-
-std::optional<size_t> VariableObject::valueFromRegister(HANDLE hThread, short regOpcode)
+std::optional<size_t> VariableObject::valueFromRegister(uint64_t tid, short regOpcode)
 {
-	CONTEXT ctx = {};
-	ctx.ContextFlags = CONTEXT_ALL;
+	if (!backend)
+		return std::nullopt;
 
-	if (!GetThreadContext(hThread, &ctx))
+	Registers regs;
+	if (!backend->getRegisters(tid, regs))
 		return std::nullopt;
 
 	switch (regOpcode)
 	{
-	case DW_OP_reg0:  return ctx.Rax;
-	case DW_OP_reg1:  return ctx.Rdx;
-	case DW_OP_reg2:  return ctx.Rcx;
-	case DW_OP_reg3:  return ctx.Rbx;
-	case DW_OP_reg4:  return ctx.Rsi;
-	case DW_OP_reg5:  return ctx.Rdi;
-	case DW_OP_reg6:  return ctx.Rbp;
-	case DW_OP_reg7:  return ctx.Rsp;
-	case DW_OP_reg8:  return ctx.R8;
-	case DW_OP_reg9:  return ctx.R9;
-	case DW_OP_reg10: return ctx.R10;
-	case DW_OP_reg11: return ctx.R11;
-	case DW_OP_reg12: return ctx.R12;
-	case DW_OP_reg13: return ctx.R13;
-	case DW_OP_reg14: return ctx.R14;
-	case DW_OP_reg15: return ctx.R15;
+	case DW_OP_reg0:  return regs.rax;
+	case DW_OP_reg1:  return regs.rdx;
+	case DW_OP_reg2:  return regs.rcx;
+	case DW_OP_reg3:  return regs.rbx;
+	case DW_OP_reg4:  return regs.rsi;
+	case DW_OP_reg5:  return regs.rdi;
+	case DW_OP_reg6:  return regs.rbp;
+	case DW_OP_reg7:  return regs.rsp;
+	case DW_OP_reg8:  return regs.r8;
+	case DW_OP_reg9:  return regs.r9;
+	case DW_OP_reg10: return regs.r10;
+	case DW_OP_reg11: return regs.r11;
+	case DW_OP_reg12: return regs.r12;
+	case DW_OP_reg13: return regs.r13;
+	case DW_OP_reg14: return regs.r14;
+	case DW_OP_reg15: return regs.r15;
 	}
 
 	return std::nullopt;
 }
 
-size_t VariableObject::readVarFromMemory(PVOID address)
+size_t VariableObject::readVarFromMemory(uintptr_t address)
 {
-	size_t ret;
-	SIZE_T len;
-	if (!ReadProcessMemory(hProcess, address, &ret, sizeof(size_t), &len))
+	if (!backend)
+		throw std::runtime_error("No backend attached");
+
+	size_t ret = 0;
+	size_t bytesRead = 0;
+	if (!backend->readMemory(address, &ret, sizeof(size_t), &bytesRead) || bytesRead != sizeof(size_t))
 		throw std::runtime_error("cannot read var from memory");
 	return ret;
 }
@@ -236,7 +249,7 @@ size_t VariableObject::readVarFromMemory(PVOID address)
 ConstObject::ConstObject(size_t v, Dwarf_Die subprogram, Dwarf_Error error, std::string name) : val(v), SymbolObject(name)
 {
 	Dwarf_Addr lopc = 0;
-	Dwarf_Addr hipc = 0; 
+	Dwarf_Addr hipc = 0;
 	Dwarf_Half form = 0;
 	Dwarf_Form_Class formclass = (Dwarf_Form_Class)0;
 	int res = dwarf_lowpc(subprogram, &lopc, &error);
