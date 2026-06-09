@@ -1,15 +1,16 @@
 #pragma once
+#ifdef _WIN32
 #include <windows.h>
 #include <subauth.h>
+#include <string>
 #include <iostream>
-#include <memory>
-#include <cstdio>
 
 class UnicodeStringEx
 {
 public:
-	~UnicodeStringEx();
-	UnicodeStringEx(HANDLE, PUNICODE_STRING);
 	UNICODE_STRING realUnicode;
+	UnicodeStringEx(HANDLE, PUNICODE_STRING);
+	~UnicodeStringEx();
 	std::string toString();
 };
+#endif

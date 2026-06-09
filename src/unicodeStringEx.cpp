@@ -1,3 +1,4 @@
+#ifdef _WIN32
 #include "unicodeStringEx.h"
 
 UnicodeStringEx::~UnicodeStringEx()
@@ -28,3 +29,4 @@ std::string UnicodeStringEx::toString()
 	std::string ret(buf.begin(), buf.end());
 	return ret;
 }
+#endif
