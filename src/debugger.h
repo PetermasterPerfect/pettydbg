@@ -1,77 +1,61 @@
 #pragma once
-#include <windows.h>
-#include <tlhelp32.h>
-#include <psapi.h>
-#include <sstream>
-#include <map>
+#include <string>
 #include <vector>
+#include <map>
 #include <memory>
-#include <stdexcept>
+#include <optional>
+#include <iostream>
 #include <iomanip>
 #include <fstream>
+#include <sstream>
+#include <cstdint>
+#include <cstring>
 #include <algorithm>
-#include "peb.h"
-#include "unicodeStringEx.h"
-#include "thread_info.h"
 #include <inttypes.h>
 #include <Zydis/Zydis.h>
-#include <optional>
 #include "dwarf.h"
 #include "libdwarf.h"
 #include "symbolObject.h"
-
-#define INT_1 0xCD01
-#define INT_3 0xCC
+#include "debug_backend.h"
 
 #define NOT_THIS_CU 0x100
 #define THIS_CU 0x101
 #define FOUND_SUBPROGRAM 0x102
 
-class DebuggerEngine;
-enum states{halt, busy};
-
-struct SmartHandleDeleter
-{
-	BOOL operator()(HANDLE h) const {
-		return CloseHandle(h);
-	}
-};
-
-using SmartHandle = std::unique_ptr<void, SmartHandleDeleter>;
+enum states { halt, busy };
 
 class DebuggerEngine
 {
 public:
-	DebuggerEngine(const wchar_t *);
-	DebuggerEngine(DWORD pid);
+	DebuggerEngine(const std::string& cmd);
+	DebuggerEngine(uint64_t pid);
 	~DebuggerEngine();
 
-	bool isBusy() const { return state == busy; };
-	friend BOOL WINAPI registerSignals(DWORD);
-
+	bool isBusy() const { return state == busy; }
+	uint64_t getProcessId() const;
 
 	void exit();
-	void handleDebugEvent(unsigned level=0);
+	void handleDebugEvent(unsigned level = 0);
 	void continueExecution();
 	void restart();
 	void breakSignal();
 	void threadsInfo();
 	void memoryMappingInfo();
-	void disassembly(PVOID, SIZE_T);
-	void setBreakPoint(PVOID, bool temp=false);
+	void disassembly(uintptr_t addr, size_t sz);
+	void setBreakPoint(uintptr_t addr, bool temp = false);
 	void stepOver();
 	void stepIn();
 	void finish();
-	void setTrapFlag();
-	void unsetTrapFlag();
-	void showStack(SIZE_T);
+	void showStack(size_t sz);
 	void showGeneralPurposeRegisters();
 	void breakpointsInfo();
-	void deleteBreakpoint(PVOID);
-	std::map<DWORD, SmartHandle> listActiveThreads();
-	void printLocal(std::string);
+	void deleteBreakpoint(uintptr_t addr);
+	std::vector<uint64_t> listActiveThreads();
+	void printLocal(const std::string& varName);
 	void showLocals();
-	std::optional<std::string> findCurrentSource(size_t);
+	std::optional<std::string> findCurrentSource(size_t lines);
+
+	IDebugBackend* getBackend() { return backend.get(); }
 
 private:
 	struct Address2FunctionSymbol
@@ -83,98 +67,62 @@ private:
 		Dwarf_Die cuDie = 0;
 		Address2FunctionSymbol(Dwarf_Unsigned off) : offset(off) {}
 	};
-	
+
 	struct Address2Locals
 	{
 		Dwarf_Unsigned offset;
 		Dwarf_Die subprogram = 0;
-
 		Address2Locals(Dwarf_Unsigned off) : offset(off) {}
 	};
 
-	Dwarf_Debug dbg;
+	std::unique_ptr<IDebugBackend> backend;
+	states state = halt;
+
+	Dwarf_Debug dbg = 0;
 	Dwarf_Error error = 0;
 
-	DEBUG_EVENT debugEvent;
-	DWORD processId;
-	SmartHandle hProcess;
-	PVOID imageBase;
-	IMAGE_NT_HEADERS ntHdr;
-	states state = halt;
-	bool isAttached;
-	bool isRunning;
-	bool firstBreakpoint = false; // inspiration from https://github.com/x64dbg/TitanEngine
 	bool finishing = false;
 	bool returning = false;
-	std::map<PVOID, BYTE> breakpoints;
-	std::pair<PVOID, BYTE> tempBreakpoint;
-	PVOID lastBreakpoint = nullptr;
+	std::map<uintptr_t, uint8_t> breakpoints;
+	std::pair<uintptr_t, uint8_t> tempBreakpoint = {0, 0};
+	uintptr_t lastBreakpoint = 0;
 	bool continueTrap = false;
 	std::vector<std::shared_ptr<SymbolObject>> localVariables;
 
-	SmartHandle startup(const wchar_t*);
-	void continueIfState(states);
+	uintptr_t currentBreakAddr = 0;
+
 	void debuggerInit();
-	template<class... Args> void debuggerMessage(Args ...);
-	template <typename T> std::string asHex(T);
-	std::string memStateAsString(DWORD);
-	std::string memTypeAsString(DWORD);
-	
-	void exceptionEvent();
-	void createThreadEvent();
-	void createProcessEvent();
-	void exitThreadEvent();
-	void exitProcessEvent();
-	void loadDllEvent();
-	void unloadDllEvent();
-	void outputDebugStringEvent();
-	void ripEvent();
-	
-	NtQueryInformationProcess getNtQueryInformationProcess();
-	NtQueryInformationThread getNtQueryInformationThread();
-	std::unique_ptr<PEB> loadPeb(SIZE_T* = nullptr);
-	std::unique_ptr <RTL_USER_PROCESS_PARAMETERS> loadProcessParameters();
-	std::unique_ptr<PEB_LDR_DATA> loadLoaderData();
-	std::map<PVOID, std::string> sketchMemory();
-	std::map<PVOID, std::string> sketchThreadMemory();
-	std::map<PVOID, std::string> sketchModulesSections(PVOID, std::string);
-	void sketchMemoryTest();
-	void replaceInt3(PVOID, BYTE*, SIZE_T);
+	template<class... Args> void debuggerMessage(Args... args);
+	template <typename T> std::string asHex(T num);
+	void replaceInt3(uintptr_t addr, uint8_t* buf, size_t sz);
 	void deleteTempBreakpoint();
-	
-	PVOID getImageBase();
-	void loadPeNtHeader();
-	std::unique_ptr<char[]> getFullExecPath();
-	void updateLocalVariables(size_t);
-	inline SmartHandle getDebugEventsThread() { return  std::move(listActiveThreads()[debugEvent.dwThreadId]);  }
 
 	void initDwarf();
 	void resetDwarf();
-	int findSubprogramInDieChain(Dwarf_Die, Address2FunctionSymbol&, int);
-	bool findSubprogramInCuChain(Address2FunctionSymbol&);
+	int findSubprogramInDieChain(Dwarf_Die die, Address2FunctionSymbol& help, int level);
+	bool findSubprogramInCuChain(Address2FunctionSymbol& help);
 
-	std::pair<std::string, Dwarf_Unsigned> matchFunctionSymbol(Dwarf_Unsigned, Dwarf_Addr&);
-	
-	void mapLocalVariables(Dwarf_Unsigned);
+	std::pair<std::string, Dwarf_Unsigned> matchFunctionSymbol(Dwarf_Unsigned offset, Dwarf_Addr& funcStart);
+	void mapLocalVariables(Dwarf_Unsigned offset);
 
-	int checkDieForSubprogram(Dwarf_Die, Address2FunctionSymbol&, int);
-	int checkDieForSubprogram(Dwarf_Die, Address2Locals&, int);
-	int checkSubprogramDetails(Dwarf_Die, Address2FunctionSymbol&);
-	int checkSubprogramDetails(Dwarf_Die, Address2Locals&);
-	int checkCompDir(Dwarf_Die, Address2FunctionSymbol&);
-	int checkCompDir(Dwarf_Die, Address2Locals&);
+	int checkDieForSubprogram(Dwarf_Die die, Address2FunctionSymbol& help, int level);
+	int checkDieForSubprogram(Dwarf_Die die, Address2Locals& help, int level);
+	int checkSubprogramDetails(Dwarf_Die die, Address2FunctionSymbol& help);
+	int checkSubprogramDetails(Dwarf_Die die, Address2Locals& help);
+	int checkCompDir(Dwarf_Die die, Address2FunctionSymbol& help);
+	int checkCompDir(Dwarf_Die die, Address2Locals& help);
 
-	int getHighOffset(Dwarf_Die, Dwarf_Addr*, Dwarf_Addr*, Dwarf_Error*);
-	bool nameFromAbstract(Dwarf_Die, Address2FunctionSymbol&, char**);
+	int getHighOffset(Dwarf_Die die, Dwarf_Addr* lowpc, Dwarf_Addr* highpc, Dwarf_Error* err);
+	bool nameFromAbstract(Dwarf_Die die, Address2FunctionSymbol& help, char** name);
 
-	int findVariablesInSubprogram(Dwarf_Die, Address2Locals&, int);
+	int findVariablesInSubprogram(Dwarf_Die die, Address2Locals& help, int level);
 	int scanSubprogramForVariables(Dwarf_Die die, Address2Locals& help, int level);
-	void extractVariableFromTag(Dwarf_Die, Address2Locals&);
-	int attrWithhAbstractOrigin(std::pair<Dwarf_Die, Dwarf_Die>, Dwarf_Half, Dwarf_Attribute*);
-	std::optional<std::string> varNameWithAbstractOrigin(std::pair<Dwarf_Die, Dwarf_Die>);
-	Dwarf_Signed DebuggerEngine::findAddressLineIndex(Dwarf_Line*, Dwarf_Signed, size_t*, Address2FunctionSymbol&);
+	void extractVariableFromTag(Dwarf_Die die, Address2Locals& help);
+	int attrWithhAbstractOrigin(std::pair<Dwarf_Die, Dwarf_Die> dies, Dwarf_Half attrNum, Dwarf_Attribute* attr);
+	std::optional<std::string> varNameWithAbstractOrigin(std::pair<Dwarf_Die, Dwarf_Die> dies);
+	Dwarf_Signed findAddressLineIndex(Dwarf_Line* lineBuf, Dwarf_Signed lineCount, size_t* lineNum, Address2FunctionSymbol& help);
 
-	std::optional<std::string> findFunctionSource(Dwarf_Unsigned, size_t);
-	std::string correctWslPath(std::string);
-
+	std::optional<std::string> findFunctionSource(Dwarf_Unsigned offset, size_t lines);
+	std::string correctWslPath(std::string input);
+	void updateLocalVariables(size_t addr);
 };
