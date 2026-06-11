@@ -1,81 +1,130 @@
 #pragma once
 #include "commandsBaseListener.h"
+#include "commandsLexer.h"
 #include "debugger.h"
+#include <csignal>
+#include <iostream>
+#include <sstream>
+#include <optional>
+#include <memory>
+#include <stdexcept>
+
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 using namespace antlr4;
 using namespace antlr4::tree;
 
 extern DebuggerEngine* g_engine;
 
+#ifdef _WIN32
+static BOOL WINAPI registerSignals(DWORD dwCtrlType)
+{
+	if (dwCtrlType == CTRL_C_EVENT)
+		goto KILL;
+	else if (dwCtrlType == CTRL_BREAK_EVENT)
+	{
+		if (g_engine && g_engine->isBusy())
+		{
+			g_engine->breakSignal();
+			goto RET;
+		}
+		else
+			goto KILL;
+	}
+KILL:
+	if (g_engine)
+		g_engine->exit();
+	ExitProcess(0xcc);
+RET:
+	return TRUE;
+}
+#else
+static void registerSignals(int sig)
+{
+	if (g_engine && g_engine->isBusy())
+	{
+		g_engine->breakSignal();
+	}
+	else
+	{
+		if (g_engine)
+			g_engine->exit();
+		std::exit(0);
+	}
+}
+#endif
+
 class LexerErrorListener : public BaseErrorListener
 {
 	void syntaxError(Recognizer* recognizer, Token* offendingSymbol, size_t line, size_t charPositionInLine,
-		const std::string& msg, std::exception_ptr e)
+		const std::string& msg, std::exception_ptr e) override
 	{
 		throw std::runtime_error(msg);
 	}
 
 	void reportAmbiguity(Parser* recognizer, const dfa::DFA& dfa, size_t startIndex, size_t stopIndex, bool exact,
-		const antlrcpp::BitSet& ambigAlts, atn::ATNConfigSet* configs)
+		const antlrcpp::BitSet& ambigAlts, atn::ATNConfigSet* configs) override
 	{
 		throw std::runtime_error("Ambiguity");
 	}
 };
 
-
-
 class CommandsEvalErrorListener : public BaseErrorListener
 {
 	void syntaxError(Recognizer* recognizer, Token* offendingSymbol, size_t line, size_t charPositionInLine,
-		const std::string& msg, std::exception_ptr e)
+		const std::string& msg, std::exception_ptr e) override
 	{
-
 	}
 };
 
 class CommandsEvalErrorStrategy : public DefaultErrorStrategy
 {
-	void recover(Parser* recognizer, std::exception_ptr e)
+	void recover(Parser* recognizer, std::exception_ptr e) override
 	{
 		throw std::runtime_error("recover");
 	}
 
-	Token* recoverInline(Parser* recognizer)
+	Token* recoverInline(Parser* recognizer) override
 	{
 		throw std::runtime_error("recoverInline");
 	}
 
-	void sync(Parser* recognizer)
+	void sync(Parser* recognizer) override
 	{
 	}
 };
-
 
 template <typename T>
 class CommandsEvalListener : public commandsBaseListener
 {
 public:
-	CommandsEvalListener(T arg) : engine(arg) 
+	CommandsEvalListener(T arg) : engine(arg)
 	{
 		g_engine = &engine;
+#ifdef _WIN32
 		SetConsoleCtrlHandler(registerSignals, TRUE);
-	};
-	//friend class CommandsEvalListener;
+#else
+		std::signal(SIGINT, registerSignals);
+#endif
+	}
+
 	DebuggerEngine engine;
 
 private:
 	std::optional<size_t> integerFromArgument(ParseTree*);
 	std::optional<std::string> stringFromArgument(ParseTree*);
-	size_t fromHex(std::string);
+	size_t fromHex(const std::string& str);
 	void enterCommand0Arg(commandsParser::Command0ArgContext* /*ctx*/) override;
 	void enterCommand1Arg(commandsParser::Command1ArgContext* /*ctx*/) override;
 	void enterCommand2Arg(commandsParser::Command2ArgContext* /*ctx*/) override;
-	
 };
+
 template <typename T>
-size_t CommandsEvalListener<T>::fromHex(std::string str)
+size_t CommandsEvalListener<T>::fromHex(const std::string& str)
 {
-	size_t x;
+	size_t x = 0;
 	std::stringstream ss;
 	ss << std::hex << str;
 	ss >> x;
@@ -83,17 +132,16 @@ size_t CommandsEvalListener<T>::fromHex(std::string str)
 }
 
 template <typename T>
-std::optional<size_t> CommandsEvalListener<T>::integerFromArgument(ParseTree *childTree)
+std::optional<size_t> CommandsEvalListener<T>::integerFromArgument(ParseTree* childTree)
 {
 	try
 	{
 		auto terminal = dynamic_cast<antlr4::tree::TerminalNode*>(childTree);
-
-		if (terminal) 
+		if (terminal)
 		{
 			antlr4::Token* token = terminal->getSymbol();
 			if (token->getType() == commandsParser::INT)
-				return std::stol(token->getText());
+				return std::stoull(token->getText());
 			else if (token->getType() == commandsParser::HEXINT)
 				return fromHex(token->getText());
 		}
@@ -109,7 +157,6 @@ template <typename T>
 std::optional<std::string> CommandsEvalListener<T>::stringFromArgument(ParseTree* childTree)
 {
 	auto terminal = dynamic_cast<antlr4::tree::TerminalNode*>(childTree);
-
 	if (terminal)
 	{
 		antlr4::Token* token = terminal->getSymbol();
@@ -124,7 +171,7 @@ void CommandsEvalListener<T>::enterCommand0Arg(commandsParser::Command0ArgContex
 {
 	if (ctx->children.size() != 1)
 		return;
-	//ANTLRInputStream s("dsads");
+
 	auto type = ctx->start->getType();
 	switch (type)
 	{
@@ -170,7 +217,7 @@ void CommandsEvalListener<T>::enterCommand1Arg(commandsParser::Command1ArgContex
 	auto type = ctx->start->getType();
 	if (ctx->children.size() != 2 && type != commandsParser::LL)
 		return;
-	
+
 	auto val = ctx->children.size() == 2 ? integerFromArgument(ctx->children[1]) : 10;
 	if (val)
 	{
@@ -180,16 +227,20 @@ void CommandsEvalListener<T>::enterCommand1Arg(commandsParser::Command1ArgContex
 			break;
 		case commandsParser::STACK:
 			engine.showStack(val.value());
+			break;
 		case commandsParser::DELBPOINT:
-			engine.deleteBreakpoint(reinterpret_cast<PVOID>(val.value()));
+			engine.deleteBreakpoint(val.value());
+			break;
 		case commandsParser::BPOINT:
-			engine.setBreakPoint(reinterpret_cast<PVOID>(val.value()));
+			engine.setBreakPoint(val.value());
 			break;
 		case commandsParser::LL:
+		{
 			auto srcs = engine.findCurrentSource(val.value());
-			if(srcs)
+			if (srcs)
 				std::cout << srcs.value();
 			break;
+		}
 		}
 	}
 	else if (type == commandsParser::PRINT)
@@ -197,12 +248,11 @@ void CommandsEvalListener<T>::enterCommand1Arg(commandsParser::Command1ArgContex
 		auto name = stringFromArgument(ctx->children[1]);
 		if (name)
 		{
-			if (name.value().size() == 1)
+			if (name.value().size() <= 1)
 				return;
 			engine.printLocal(name.value().substr(1));
 		}
 	}
-
 }
 
 template <typename T>
@@ -218,7 +268,9 @@ void CommandsEvalListener<T>::enterCommand2Arg(commandsParser::Command2ArgContex
 	{
 		auto buf = integerFromArgument(ctx->children[i]);
 		if (buf)
+		{
 			val[i - 1] = buf.value();
+		}
 		else
 		{
 			std::cerr << "Bad format of argument\n";
@@ -228,7 +280,7 @@ void CommandsEvalListener<T>::enterCommand2Arg(commandsParser::Command2ArgContex
 	switch (type)
 	{
 	case commandsParser::DISASSEMBLY:
-		engine.disassembly(reinterpret_cast<PVOID>(val[0]), val[1]);
+		engine.disassembly(val[0], val[1]);
 		break;
 	}
 }

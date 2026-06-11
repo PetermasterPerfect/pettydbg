@@ -4,11 +4,14 @@
 #include "libdwarf.h"
 #include <string>
 #include <thread>
-#include <locale>
-#include <codecvt>
+#include <iostream>
+
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 template <typename T>
-void debuggerLoop(CommandsEvalListener<T> &commandsEval)
+void debuggerLoop(CommandsEvalListener<T>& commandsEval)
 {
 	std::string cmd;
 	while (true)
@@ -20,7 +23,10 @@ void debuggerLoop(CommandsEvalListener<T> &commandsEval)
 			{
 				std::cout << ">>> ";
 			} while (!std::getline(std::cin, cmd));
-					
+
+			if (cmd.empty())
+				continue;
+
 			ANTLRInputStream input(cmd);
 			commandsLexer lexer(&input);
 			LexerErrorListener lexerErrListener;
@@ -37,7 +43,7 @@ void debuggerLoop(CommandsEvalListener<T> &commandsEval)
 			parser.removeErrorListeners();
 			parser.addErrorListener(&errListener);
 
-			try 
+			try
 			{
 				ParseTree* tree = parser.command();
 				ParseTreeWalker walker;
@@ -51,30 +57,29 @@ void debuggerLoop(CommandsEvalListener<T> &commandsEval)
 	}
 }
 
-/*
-VERY IMPORTANT
-	The cmd parameter used to restart the debugged process MUST be quoted!
-	It could be double, triple  quoted etc.
-	(e.g """app.exe""" runs correctly)
-	So if user gives as an argument cmd, we should make sure its quoted.
-*/
-
 int main(int argc, char** argv)
 {
+#ifdef _WIN32
 	DebugSetProcessKillOnExit(TRUE);
+#endif
 	if (argc < 2)
 	{
-		std::cerr << "USAGE dbg.exe <app_name.exe>/-p <PID>\n";
+		std::cerr << "USAGE pettydbg <app_name> / -p <PID>\n";
 		return 3;
 	}
 
 	if (std::string(argv[1]) == "-p")
 	{
+		if (argc < 3)
+		{
+			std::cerr << "USAGE pettydbg -p <PID>\n";
+			return 3;
+		}
 		try
 		{
-			DWORD pid = std::stol(argv[2]);
-			CommandsEvalListener<DWORD> commandsEval(pid);
-			debuggerLoop<DWORD>(commandsEval);
+			uint64_t pid = std::stoull(argv[2]);
+			CommandsEvalListener<uint64_t> commandsEval(pid);
+			debuggerLoop<uint64_t>(commandsEval);
 		}
 		catch (const std::invalid_argument& e)
 		{
@@ -84,26 +89,28 @@ int main(int argc, char** argv)
 		{
 			std::cerr << "Invalid process id argument. Out of range.\n";
 		}
-		catch (const std::runtime_error& e)
+		catch (const std::exception& e)
 		{
-			std::cerr << "Cannot attach debugger\n";
+			std::cerr << "Cannot attach debugger: " << e.what() << "\n";
 		}
 	}
 	else
 	{
-		std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>> converter;
-		std::string buf(argv[1]);
-		std::wstring cmd = L"\"" + converter.from_bytes(buf) + L"\"";
+		std::string cmd = argv[1];
+		for (int i = 2; i < argc; ++i)
+		{
+			cmd += " ";
+			cmd += argv[i];
+		}
 		try
 		{
-			CommandsEvalListener<const wchar_t*> commandsEval(cmd.c_str());
-			debuggerLoop<const wchar_t*>(commandsEval);
+			CommandsEvalListener<std::string> commandsEval(cmd);
+			debuggerLoop<std::string>(commandsEval);
 		}
-		catch (const std::runtime_error& e)
+		catch (const std::exception& e)
 		{
-			std::cerr << "Cannot continue debugging\n";
+			std::cerr << "Cannot continue debugging: " << e.what() << "\n";
 		}
-		
 	}
 
 	return 0;
