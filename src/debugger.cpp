@@ -114,6 +114,11 @@ void DebuggerEngine::handleDebugEvent(unsigned level)
 		return;
 
 	currentBreakAddr = event.address;
+	Registers regs;
+	if (backend->getRegisters(event.threadId, regs) &&
+		(breakpoints.find(regs.rip - 1) == breakpoints.end() || (tempBreakpoint.first && tempBreakpoint.first == regs.rip - 1)))
+		event.reason = StopReason::SingleStep;
+			
 
 	if (event.reason == StopReason::Exited)
 	{
@@ -124,8 +129,8 @@ void DebuggerEngine::handleDebugEvent(unsigned level)
 
 	if (event.reason == StopReason::Breakpoint)
 	{
+		debuggerMessage("breakpoint");
 		uintptr_t bpAddr = event.address;
-		Registers regs;
 		if (backend->getRegisters(event.threadId, regs))
 		{
 			// On x86_64, INT3 leaves RIP pointing after the 0xCC
@@ -134,10 +139,6 @@ void DebuggerEngine::handleDebugEvent(unsigned level)
 				bpAddr = regs.rip - 1;
 				regs.rip = bpAddr;
 				backend->setRegisters(event.threadId, regs);
-			}
-			else if (breakpoints.find(regs.rip) != breakpoints.end() || (tempBreakpoint.first && tempBreakpoint.first == regs.rip))
-			{
-				bpAddr = regs.rip;
 			}
 		}
 
@@ -163,45 +164,62 @@ void DebuggerEngine::handleDebugEvent(unsigned level)
 		if (finishing)
 		{
 			backend->singleStep(event.threadId);
-			state = busy;
+			finishing = false;
+			//state = busy;
+
 		}
 	}
 	else if (event.reason == StopReason::SingleStep)
 	{
-		if (lastBreakpoint != 0)
+		debuggerMessage("singlestep");
+		if (tempBreakpoint.first && tempBreakpoint.first == regs.rip - 1)
 		{
-			if (breakpoints.find(lastBreakpoint) != breakpoints.end())
+			regs.rip = regs.rip - 1;
+			backend->setRegisters(event.threadId, regs);
+			if (breakpoints.find(tempBreakpoint.first) == breakpoints.end())
+				deleteTempBreakpoint();
+			tempBreakpoint.first = 0;
+			state = halt;
+		}
+		else
+		{
+			if (lastBreakpoint != 0)
 			{
-				uint8_t int3 = 0xCC;
-				backend->writeMemory(lastBreakpoint, &int3, sizeof(uint8_t));
-			}
-			lastBreakpoint = 0;
+				if (breakpoints.find(lastBreakpoint) != breakpoints.end())
+				{
+					uint8_t int3 = 0xCC;
+					backend->writeMemory(lastBreakpoint, &int3, sizeof(uint8_t));
+				}
+				lastBreakpoint = 0;
 
-			if (continueTrap)
+				if (continueTrap)
+				{
+					continueTrap = false;
+					continueExecution();
+					return;
+				}
+			}
+
+			state = halt;
+
+			if (finishing)
 			{
-				continueTrap = false;
+				finish();
+				while (finishing)
+					handleDebugEvent(level + 1);
+			}
+			if (returning)
+			{
+				Registers regs;
+				backend->getRegisters(event.threadId, regs);
+				uintptr_t retAddress = 0;
+				backend->readMemory(regs.rsp, &retAddress, sizeof(uintptr_t));
+				setBreakPoint(retAddress, true);
 				continueExecution();
-				return;
+				returning = false;
 			}
-		}
-
-		state = halt;
-
-		if (finishing)
-		{
-			finish();
-			while (finishing)
-				handleDebugEvent(level + 1);
-		}
-		if (returning)
-		{
-			Registers regs;
-			backend->getRegisters(event.threadId, regs);
-			uintptr_t retAddress = 0;
-			backend->readMemory(regs.rsp, &retAddress, sizeof(uintptr_t));
-			setBreakPoint(retAddress, true);
-			continueExecution();
-			returning = false;
+			if (!finishing && !returning)
+				debuggerMessage("Breakpoint hit at address ", asHex(currentBreakAddr));
 		}
 	}
 	else if (event.reason == StopReason::Signal)
