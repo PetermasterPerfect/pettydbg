@@ -19,10 +19,22 @@ void debuggerLoop(CommandsEvalListener<T>& commandsEval)
 		commandsEval.engine.handleDebugEvent();
 		if (!commandsEval.engine.isBusy())
 		{
-			do
+			commandsEval.engine.handleDebugEvent();
+			if (commandsEval.engine.isBusy())
+				continue;
+
+			std::cout << ">>> " << std::flush;
+
+			if (!std::getline(std::cin, cmd))
 			{
-				std::cout << ">>> ";
-			} while (!std::getline(std::cin, cmd));
+				if (std::cin.eof())
+				{
+					std::cout << "\n";
+					break;
+				}
+				std::cin.clear();
+				continue;
+			}
 
 			if (cmd.empty())
 				continue;
@@ -32,8 +44,6 @@ void debuggerLoop(CommandsEvalListener<T>& commandsEval)
 			LexerErrorListener lexerErrListener;
 			CommandsEvalErrorListener errListener;
 			std::shared_ptr<CommandsEvalErrorStrategy> handler = std::make_shared<CommandsEvalErrorStrategy>();
-			if (!handler)
-				throw std::runtime_error("Memory allocation failed");
 			lexer.removeErrorListeners();
 			lexer.addErrorListener(&lexerErrListener);
 			CommonTokenStream tokens(&lexer);
