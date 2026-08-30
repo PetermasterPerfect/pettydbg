@@ -79,3 +79,33 @@ if(WIN32)
 	    $<TARGET_FILE:dwarf>
 	    $<TARGET_FILE_DIR:pettydbg>) 
 endif()
+
+# Unit testing with GoogleTest
+enable_testing()
+include(FetchContent)
+FetchContent_Declare(
+  googletest
+  URL https://github.com/google/googletest/archive/refs/tags/v1.14.0.tar.gz
+)
+# For Windows: Prevent overriding the parent project's compiler/linker settings
+set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(googletest)
+
+file(GLOB UNIT_TEST_SOURCES ${PROJECT_SOURCE_DIR}/tests/unit/*.cpp)
+file(GLOB ANTLR_PARSER_GEN_SOURCES 
+	${CMAKE_BINARY_DIR}/commandsLexer.cpp
+	${CMAKE_BINARY_DIR}/commandsParser.cpp
+	${CMAKE_BINARY_DIR}/commandsBaseListener.cpp
+	${CMAKE_BINARY_DIR}/commandsListener.cpp)
+
+add_executable(unit_tests ${UNIT_TEST_SOURCES} ${ANTLR_PARSER_GEN_SOURCES})
+target_link_libraries(unit_tests PRIVATE 
+	GTest::gtest_main 
+	antlr4_static 
+	libdwarf::dwarf-shared
+)
+if(UNIX)
+	target_link_libraries(unit_tests PRIVATE pthread dl)
+endif()
+
+add_test(NAME unit_tests COMMAND unit_tests)
