@@ -109,3 +109,48 @@ if(UNIX)
 endif()
 
 add_test(NAME unit_tests COMMAND unit_tests)
+
+# End-to-end tests launch pettydbg against real, deterministic debuggees.
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+
+function(add_e2e_debuggee target_name source_file)
+	add_executable(${target_name} ${source_file})
+	if(MSVC)
+		target_compile_options(${target_name} PRIVATE /Od /Zi)
+	else()
+		target_compile_options(${target_name} PRIVATE -O0 -g)
+	endif()
+endfunction()
+
+add_e2e_debuggee(e2e_debuggee tests/e2e/debuggee.cpp)
+add_e2e_debuggee(e2e_debuggee_state tests/e2e/debuggee_state.cpp)
+add_e2e_debuggee(e2e_debuggee_call tests/e2e/debuggee_call.cpp)
+add_e2e_debuggee(e2e_debuggee_source tests/e2e/debuggee_source.cpp)
+
+add_test(
+	NAME e2e_debugger_commands
+	COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/e2e/run_debugger.py
+		$<TARGET_FILE:pettydbg>
+		$<TARGET_FILE:e2e_debuggee>)
+set_tests_properties(e2e_debugger_commands PROPERTIES TIMEOUT 20)
+
+add_test(
+	NAME e2e_debugger_register_state
+	COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/e2e/test_register_state.py
+		$<TARGET_FILE:pettydbg>
+		$<TARGET_FILE:e2e_debuggee_state>)
+set_tests_properties(e2e_debugger_register_state PROPERTIES TIMEOUT 20)
+
+add_test(
+	NAME e2e_debugger_breakpoint_state
+	COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/e2e/test_breakpoint_state.py
+		$<TARGET_FILE:pettydbg>
+		$<TARGET_FILE:e2e_debuggee_call>)
+set_tests_properties(e2e_debugger_breakpoint_state PROPERTIES TIMEOUT 20)
+
+add_test(
+	NAME e2e_debugger_source_state
+	COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/e2e/test_source_state.py
+		$<TARGET_FILE:pettydbg>
+		$<TARGET_FILE:e2e_debuggee_source>)
+set_tests_properties(e2e_debugger_source_state PROPERTIES TIMEOUT 20)
