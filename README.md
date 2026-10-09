@@ -1,11 +1,11 @@
 # pettydbg
 
-**pettydbg** is a lightweight CLI debugger for **Windows x86-64**, inspired by `gdb` but intentionally small, educational, and minimalistic.  
+**pettydbg** is a lightweight CLI debugger for Windows and Linux x86-64, inspired by `gdb` but intentionally small, educational, and minimalistic.
 Its purpose is to let you inspect instructions, step through execution, view registers, disassemble code, and read simple DWARF symbols — without the complexity of full-scale debuggers.
 
 ---
 
-## 🚀 Features
+##  Features
 
 - Debugs **Windows x86-64 PE** executables  
 - Software breakpoints (`int 3`)
@@ -18,7 +18,7 @@ Its purpose is to let you inspect instructions, step through execution, view reg
 
 ---
 
-## 📦 Dependencies
+##  Dependencies
 
 pettydbg uses:
 
@@ -46,9 +46,35 @@ mkdir build
 cd build
 cmake -G "Visual Studio 17 2022" ..
 ```
+Building on Linux looks similar:
+git submodule update --init --recursive
+mkdir build
+cd build
+cmake  ..
+make -j32
+
 ---
 
-## ⚠️ DWARF & Symbol Limitations
+## Testing
+
+The CTest suite includes unit tests and several state-oriented end-to-end tests
+that launch pettydbg against deterministic debuggees. The Python client sends
+commands through stdin, captures each response, and parses registers, threads,
+memory maps, stack entries, breakpoints, and disassembly. The scenarios check
+state transitions around known breakpoints and source locations. Some of these
+scenarios intentionally fail against the current debugger implementation so the
+suite acts as a diagnostic harness for known issues. Python 3 is required to run
+these tests. The client is also importable from `tests/e2e/debugger.py` for
+additional scenarios.
+
+```sh
+cmake --build build --config Debug
+ctest --test-dir build -C Debug -R e2e_debugger_ --output-on-failure
+```
+
+---
+
+## DWARF & Symbol Limitations
 
 Current symbol support is intentionally minimal:
 
@@ -62,7 +88,7 @@ Current symbol support is intentionally minimal:
 
 ---
 
-## 📝 Supported Commands
+##  Supported Commands
 
 | Command | Syntax | Description |
 |--------|--------|-------------|
@@ -84,7 +110,7 @@ Current symbol support is intentionally minimal:
 
 ---
 
-## 🎥 Demo Video
+##  Demo Video
 
 The following intentionally simple program was used to demonstrate pettydbg’s stepping, breakpoints, register dumps, and symbol printing.
 In the video, you can see that after hitting the system breakpoint, the first user-defined breakpoint is triggered by the inline assembly instruction (int3) inside the bar function.
