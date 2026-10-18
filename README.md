@@ -7,7 +7,7 @@ Its purpose is to let you inspect instructions, step through execution, view reg
 
 ##  Features
 
-- Debugs **Windows x86-64 PE** executables  
+- Debugs Windows PE and Linux ELF executables
 - Software breakpoints (`int 3`)
 - Step into / step over / step out
 - Register dump
