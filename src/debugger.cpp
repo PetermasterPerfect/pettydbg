@@ -171,7 +171,6 @@ void DebuggerEngine::handleDebugEvent(unsigned level)
 	}
 	else if (event.reason == StopReason::SingleStep)
 	{
-		debuggerMessage("singlestep");
 		if (tempBreakpoint.first && tempBreakpoint.first == regs.rip - 1)
 		{
 			regs.rip = regs.rip - 1;
