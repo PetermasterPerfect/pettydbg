@@ -47,12 +47,13 @@ cd build
 cmake -G "Visual Studio 17 2022" ..
 ```
 Building on Linux looks similar:
+```sh
 git submodule update --init --recursive
 mkdir build
 cd build
 cmake  ..
 make -j32
-
+```
 ---
 
 ## Testing
